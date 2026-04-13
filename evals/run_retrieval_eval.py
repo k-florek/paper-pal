@@ -10,6 +10,18 @@ from src.agent import Agent, PaperSearchResult
 VALID_MODES = ["balanced", "clinical", "mechanism", "latest", "reviews"]
 
 
+def load_backend_config(config_path: Path, backend: str) -> dict:
+    """Load backend defaults from config.json for direct evaluator runs."""
+    if not config_path.exists():
+        return {}
+    try:
+        cfg = json.loads(config_path.read_text())
+    except Exception:
+        return {}
+    backend_cfg = cfg.get(backend, {})
+    return backend_cfg if isinstance(backend_cfg, dict) else {}
+
+
 def load_jsonl(path: Path) -> list[dict]:
     rows: list[dict] = []
     for line in path.read_text().splitlines():
@@ -162,6 +174,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate retrieval/ranking quality with heuristic labels.")
     parser.add_argument("--dataset", default="evals/datasets/retrieval_eval.jsonl")
     parser.add_argument("--backend", default="ollama")
+    parser.add_argument("--config", default="config.json")
     parser.add_argument("--output", default="evals/results/retrieval_eval.jsonl")
     parser.add_argument("--include-papers", action="store_true")
     parser.add_argument("--simulate-feedback", action="store_true")
@@ -170,6 +183,7 @@ def main() -> None:
     args = parser.parse_args()
 
     dataset = load_jsonl(Path(args.dataset))
+    backend_config = load_backend_config(Path(args.config), args.backend)
     modes = VALID_MODES if args.modes.strip().lower() == "all" else [m.strip() for m in args.modes.split(",") if m.strip()]
     invalid_modes = [m for m in modes if m not in VALID_MODES]
     if invalid_modes:
@@ -178,7 +192,11 @@ def main() -> None:
     rows: list[dict] = []
     mode_summaries: dict[str, dict[str, float]] = {}
     for mode in modes:
-        agent = Agent(session=f"retrieval-eval-{mode}", backend=args.backend)
+        agent = Agent(
+            session=f"retrieval-eval-{mode}",
+            backend=args.backend,
+            backend_config=backend_config,
+        )
         mode_rows: list[dict] = []
         for item in dataset:
             mode_rows.append(
