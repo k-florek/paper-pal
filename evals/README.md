@@ -87,6 +87,13 @@ For Bedrock robustness testing, force the research pipeline during benchmark run
 python -m evals.run_ab_compare --dataset evals/datasets/retrieval_eval.jsonl --backend aws_bedrock --modes all --feedback-k 5 --force-research --out-dir evals/results --prefix ab_bedrock
 ```
 
+To compare sanitizer behavior explicitly:
+
+```bash
+python -m evals.run_retrieval_eval --dataset evals/datasets/retrieval_eval.jsonl --backend aws_bedrock --modes all --force-research --sanitizer-mode strict --output evals/results/bedrock_strict.jsonl
+python -m evals.run_retrieval_eval --dataset evals/datasets/retrieval_eval.jsonl --backend aws_bedrock --modes all --force-research --sanitizer-mode tolerant --output evals/results/bedrock_tolerant.jsonl
+```
+
 This produces:
 - `evals/results/ab_baseline.jsonl`
 - `evals/results/ab_upgraded.jsonl`

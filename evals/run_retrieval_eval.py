@@ -186,10 +186,12 @@ def main() -> None:
     parser.add_argument("--feedback-k", type=int, default=5)
     parser.add_argument("--modes", default="balanced", help="Comma-separated modes or 'all'.")
     parser.add_argument("--force-research", action="store_true", help="Bypass intent routing and force research pipeline.")
+    parser.add_argument("--sanitizer-mode", choices=["strict", "tolerant"], default="tolerant")
     args = parser.parse_args()
 
     dataset = load_jsonl(Path(args.dataset))
     backend_config = load_backend_config(Path(args.config), args.backend)
+    backend_config = {**backend_config, "sanitizer_mode": args.sanitizer_mode}
     modes = VALID_MODES if args.modes.strip().lower() == "all" else [m.strip() for m in args.modes.split(",") if m.strip()]
     invalid_modes = [m for m in modes if m not in VALID_MODES]
     if invalid_modes:
@@ -247,6 +249,7 @@ def main() -> None:
     print(f"mean_precision_at_5={p5:.3f}")
     print(f"mean_ndcg_at_10={ndcg:.3f}")
     print(f"min_results_coverage={coverage:.3f}")
+    print(f"sanitizer_mode={args.sanitizer_mode}")
     if args.simulate_feedback and rows:
         mean_dp5 = sum(row["delta"]["precision_at_5"] for row in rows) / len(rows)
         mean_dndcg = sum(row["delta"]["ndcg_at_10"] for row in rows) / len(rows)

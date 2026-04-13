@@ -47,15 +47,16 @@ _SEARCH_MODE_GUIDANCE: dict[SearchMode, str] = {
 # Required core lines are title/authors/year+journal/url, followed by optional
 # metadata lines (publication type, MeSH terms, abstract).
 _PAPER_BLOCK_RE = re.compile(
-    r"^Title\s+:\s+[^\n]+\n"
-    r"Authors\s+:\s+[^\n]+\n"
-    r"Year\s+:\s+[^\n]+\|\s+Journal\s+:\s+[^\n]+\n"
-    r"URL\s+:\s+https://pubmed\.ncbi\.nlm\.nih\.gov/\d+/"
-    r"(?:\n(?:Type|MeSH|Abstract)\s+:\s+[^\n]+)*$"
+    r"^Title\s*:\s+[^\n]+\n"
+    r"Authors\s*:\s+[^\n]+\n"
+    r"Year\s*:\s+[^\n]+\|\s+Journal\s*:\s+[^\n]+\n"
+    r"URL\s*:\s+https://pubmed\.ncbi\.nlm\.nih\.gov/\d+/"
+    r"(?:\n(?:Type|MeSH|Abstract)\s*:\s+[^\n]+)*$"
 )
 
 # Extracts Title and URL fields from a validated paper block
 _FIELD_RE = re.compile(r"^(?P<key>Title|URL)\s+:\s+(?P<value>.+)$", re.MULTILINE)
+_PUBMED_URL_RE = re.compile(r"https://pubmed\.ncbi\.nlm\.nih\.gov/(?P<pmid>\d+)/?")
 
 # Detects a text-formatted tool call (used by models that skip structured tool_calls)
 _TEXT_TOOL_CALL_RE = re.compile(
@@ -135,9 +136,61 @@ def _build_title_url_map(valid_blocks: list[str]) -> dict[str, str]:
     return mapping
 
 
+def _normalize_candidate_block(block: str) -> Optional[str]:
+    """Best-effort normalize of near-valid paper blocks into canonical format."""
+    parsed: dict[str, str] = {}
+    for line in block.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        parsed[key] = value.strip()
+
+    # Handle combined "Year : ... | Journal : ..." line formatting.
+    year_line = parsed.get("year")
+    if year_line and "|" in year_line and "journal" not in parsed:
+        left, right = year_line.split("|", 1)
+        parsed["year"] = left.strip()
+        if ":" in right:
+            j_key, j_val = right.split(":", 1)
+            if j_key.strip().lower().startswith("journal"):
+                parsed["journal"] = j_val.strip()
+
+    title = parsed.get("title")
+    authors = parsed.get("authors")
+    year = parsed.get("year")
+    journal = parsed.get("journal")
+    url = parsed.get("url")
+
+    if not (title and authors and year and journal and url):
+        return None
+
+    m = _PUBMED_URL_RE.search(url)
+    if not m:
+        return None
+    normalized_url = f"https://pubmed.ncbi.nlm.nih.gov/{m.group('pmid')}/"
+
+    lines = [
+        f"Title   : {title}",
+        f"Authors : {authors}",
+        f"Year    : {year}  |  Journal : {journal}",
+        f"URL     : {normalized_url}",
+    ]
+
+    if parsed.get("type"):
+        lines.append(f"Type    : {parsed['type']}")
+    if parsed.get("mesh"):
+        lines.append(f"MeSH    : {parsed['mesh']}")
+    if parsed.get("abstract"):
+        lines.append(f"Abstract: {parsed['abstract']}")
+
+    candidate = "\n".join(lines)
+    return candidate if _PAPER_BLOCK_RE.fullmatch(candidate) else None
+
+
 def _sanitize_search_results(
-    raw_results: list[str], session: str
-) -> tuple[str, dict[str, str]]:
+    raw_results: list[str], session: str, *, allow_tolerant: bool = True
+) -> tuple[str, dict[str, str], dict]:
     """Validate and filter raw search result strings before they reach the LLM.
 
     Each result string may contain multiple paper blocks separated by
@@ -150,6 +203,9 @@ def _sanitize_search_results(
         safe, re-joined blocks and title_url_map maps titles to their URLs.
     """
     valid: list[str] = []
+    rejected_blocks = 0
+    recovered_blocks = 0
+    rejected_samples: list[str] = []
     for batch in raw_results:
         stripped_batch = batch.strip()
         if (
@@ -166,12 +222,25 @@ def _sanitize_search_results(
             if _PAPER_BLOCK_RE.fullmatch(block):
                 valid.append(block)
             else:
+                recovered = _normalize_candidate_block(block) if allow_tolerant else None
+                if recovered is not None:
+                    valid.append(recovered)
+                    recovered_blocks += 1
+                    continue
+                rejected_blocks += 1
+                if len(rejected_samples) < 3:
+                    rejected_samples.append(block[:280])
                 logger.warning(
                     "[session=%s] discarding malformed result block (possible prompt injection)",
                     session,
                 )
     combined = "\n\n---\n\n".join(valid) if valid else ""
-    return combined, _build_title_url_map(valid)
+    return combined, _build_title_url_map(valid), {
+        "valid_blocks": len(valid),
+        "rejected_blocks": rejected_blocks,
+        "recovered_blocks": recovered_blocks,
+        "rejected_samples": rejected_samples,
+    }
 
 # ---------------------------------------------------------------------------
 # Structured output utilities
@@ -558,6 +627,7 @@ class Agent:
         self._max_history_turns: int = _DEFAULT_MAX_HISTORY_TURNS
         self._pre_rank_top_n: int = 20
         self._search_mode: SearchMode = "balanced"
+        self._allow_tolerant_sanitizer: bool = True
         self._token_preferences: dict[str, float] = {}
         self._url_preferences: dict[str, float] = {}
         self._feedback_events: list[dict[str, str | bool]] = []
@@ -571,6 +641,8 @@ class Agent:
             self._pre_rank_top_n = max(5, int(config.get("pre_rank_top_n", 20)))
         except (TypeError, ValueError):
             self._pre_rank_top_n = 20
+        sanitizer_mode = str(config.get("sanitizer_mode", "tolerant")).strip().lower()
+        self._allow_tolerant_sanitizer = sanitizer_mode != "strict"
         chat_llm = build_llm(backend, config, modelType.CHAT)
         reasoning_llm = build_llm(backend, config, modelType.REASONING)
 
@@ -753,7 +825,11 @@ class Agent:
                 },
             )
 
-        combined, title_url_map = _sanitize_search_results(raw_results, self.session)
+        combined, title_url_map, sanitize_stats = _sanitize_search_results(
+            raw_results,
+            self.session,
+            allow_tolerant=self._allow_tolerant_sanitizer,
+        )
         if not combined:
             logger.warning("[session=%s] all result blocks discarded; returning empty result", self.session)
             return PaperSearchResult(
@@ -766,6 +842,10 @@ class Agent:
                     "tool_calls_detected": len(tool_calls),
                     "search_attempts": search_attempts,
                     "valid_blocks": 0,
+                    "rejected_blocks": sanitize_stats.get("rejected_blocks", 0),
+                    "recovered_blocks": sanitize_stats.get("recovered_blocks", 0),
+                    "rejected_samples": sanitize_stats.get("rejected_samples", []),
+                    "sanitizer_mode": "tolerant" if self._allow_tolerant_sanitizer else "strict",
                     "duration_sec": round(time.perf_counter() - pipeline_start, 4),
                 },
             )
@@ -788,7 +868,11 @@ class Agent:
                 "pipeline": "research",
                 "tool_calls_detected": len(tool_calls),
                 "search_attempts": search_attempts,
-                "valid_blocks": len([part for part in combined.split("\n\n---\n\n") if part.strip()]),
+                "valid_blocks": sanitize_stats.get("valid_blocks", 0),
+                "rejected_blocks": sanitize_stats.get("rejected_blocks", 0),
+                "recovered_blocks": sanitize_stats.get("recovered_blocks", 0),
+                "rejected_samples": sanitize_stats.get("rejected_samples", []),
+                "sanitizer_mode": "tolerant" if self._allow_tolerant_sanitizer else "strict",
                 "duration_sec": round(time.perf_counter() - pipeline_start, 4),
             }
         )
