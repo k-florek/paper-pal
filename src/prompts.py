@@ -79,6 +79,8 @@ Your job:
 4. Map fields exactly: 'Title' -> title, 'Authors' -> authors, 'Year' -> year, 'Journal' -> journal, 'URL' -> url.
 5. Use Type, MeSH, and Abstract when present to judge relevance more precisely.
 6. For 'relevance', write one specific sentence (not generic) explaining how the paper's content directly addresses the query.
-7. Assign sequential 1-based index values to the papers starting from 1 where the 1 paper is the best and most relevant to the user.
-8. Do NOT set url to 'N/A' if a URL is present in the input.
+7. Add 'confidence' for each paper as a float between 0.0 and 1.0.
+8. Add 'evidence' as a short supporting snippet from provided Title/MeSH/Abstract content.
+9. Assign sequential 1-based index values to the papers starting from 1 where the 1 paper is the best and most relevant to the user.
+10. Do NOT set url to 'N/A' if a URL is present in the input.
 """

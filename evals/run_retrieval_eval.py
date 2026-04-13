@@ -26,7 +26,13 @@ def keyword_gain(text: str, expected_keywords: list[str]) -> float:
     return hits / len(expected_keywords)
 
 
-def evaluate_query(agent: Agent, query: str, expected_keywords: list[str], min_results: int) -> dict:
+def evaluate_query(
+    agent: Agent,
+    query: str,
+    expected_keywords: list[str],
+    min_results: int,
+    include_papers: bool,
+) -> dict:
     response = agent.chatAgent(query)
 
     if not isinstance(response, PaperSearchResult) or not response.papers:
@@ -37,6 +43,7 @@ def evaluate_query(agent: Agent, query: str, expected_keywords: list[str], min_r
             "ndcg_at_10": 0.0,
             "min_results_pass": False,
             "status": getattr(response, "status", "non_paper"),
+            "papers": [] if include_papers else None,
         }
 
     gains: list[float] = []
@@ -51,7 +58,7 @@ def evaluate_query(agent: Agent, query: str, expected_keywords: list[str], min_r
         gains.append(gain)
         flags.append(1 if gain > 0 else 0)
 
-    return {
+    result = {
         "query": query,
         "returned": len(response.papers),
         "precision_at_5": precision_at_k(flags, k=5),
@@ -60,12 +67,26 @@ def evaluate_query(agent: Agent, query: str, expected_keywords: list[str], min_r
         "status": response.status,
     }
 
+    if include_papers:
+        result["papers"] = [
+            {
+                "title": paper.title,
+                "url": paper.url,
+                "relevance": paper.relevance,
+                "confidence": paper.confidence,
+            }
+            for paper in response.papers
+        ]
+
+    return result
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate retrieval/ranking quality with heuristic labels.")
     parser.add_argument("--dataset", default="evals/datasets/retrieval_eval.jsonl")
     parser.add_argument("--backend", default="ollama")
     parser.add_argument("--output", default="evals/results/retrieval_eval.jsonl")
+    parser.add_argument("--include-papers", action="store_true")
     args = parser.parse_args()
 
     dataset = load_jsonl(Path(args.dataset))
@@ -79,6 +100,7 @@ def main() -> None:
                 query=item["query"],
                 expected_keywords=item.get("expected_keywords", []),
                 min_results=int(item.get("min_results", 1)),
+                include_papers=args.include_papers,
             )
         )
 

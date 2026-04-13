@@ -273,6 +273,17 @@ class Paper(BaseModel):
     journal: Optional[str] = Field(default="N/A", description="Journal or venue name")
     url: Optional[str] = Field(default="N/A", description="PubMed URL")
     relevance: str = Field(default="", description="One sentence explaining relevance to the query")
+    confidence: float = Field(default=0.5, description="Model confidence from 0.0 to 1.0")
+    evidence: Optional[str] = Field(default="", description="Short evidence snippet supporting relevance")
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, value):
+        try:
+            conf = float(value)
+        except (TypeError, ValueError):
+            return 0.5
+        return max(0.0, min(1.0, conf))
 
 
 class PaperSearchResult(BaseModel):
@@ -586,6 +597,9 @@ class Agent:
         for paper in ranked.papers:
             if (not paper.url or paper.url == "N/A") and paper.title in title_url_map:
                 paper.url = title_url_map[paper.title]
+            paper.confidence = max(0.0, min(1.0, float(paper.confidence)))
+            if not paper.evidence:
+                paper.evidence = paper.relevance
 
         logger.info(
             "[session=%s] ranker returned %d paper(s) | message=%r",

@@ -403,6 +403,13 @@
       font-style: italic;
     }
 
+    .paper-card-evidence {
+      margin-top: 0.45rem;
+      font-size: 0.72rem;
+      color: rgba(226, 232, 240, 0.78);
+      line-height: 1.5;
+    }
+
     /* Query separator */
     .query-separator {
       display: flex;
@@ -598,6 +605,10 @@
           const parts = paper.authors.split(',');
           tags.push(parts[0].trim() + (parts.length > 1 ? ' et al.' : ''));
         }
+        const confidenceValue = Number(paper.confidence);
+        if (!Number.isNaN(confidenceValue)) {
+          tags.push(`Confidence ${Math.round(confidenceValue * 100)}%`);
+        }
 
         const tagsHtml = tags
           .map(t => `<span class="meta-tag">${escapeHtml(t)}</span>`)
@@ -610,6 +621,7 @@
           <div class="paper-card-title">${titleHtml}</div>
           ${tagsHtml ? `<div class="paper-card-meta">${tagsHtml}</div>` : ''}
           <div class="paper-card-relevance">${escapeHtml(paper.relevance)}</div>
+          ${paper.evidence ? `<div class="paper-card-evidence"><strong>Evidence:</strong> ${escapeHtml(paper.evidence)}</div>` : ''}
         `;
 
         papersList.appendChild(card);

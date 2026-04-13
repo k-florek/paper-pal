@@ -64,6 +64,8 @@ class PaperOut(BaseModel):
     journal: Optional[str] = None
     url: Optional[str] = None
     relevance: str
+    confidence: float = 0.5
+    evidence: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -109,6 +111,8 @@ async def chat(request: ChatRequest):
                 journal=p.journal,
                 url=p.url,
                 relevance=p.relevance,
+                confidence=p.confidence,
+                evidence=p.evidence,
             )
             for p in result.papers
         ]
