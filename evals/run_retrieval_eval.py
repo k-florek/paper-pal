@@ -94,8 +94,9 @@ def evaluate_query(
     simulate_feedback: bool,
     feedback_k: int,
     search_mode: str,
+    force_research: bool,
 ) -> dict:
-    baseline = agent.chatAgent(query, search_mode)
+    baseline = agent.chatAgent(query, search_mode, force_research=force_research)
 
     if not isinstance(baseline, PaperSearchResult) or not baseline.papers:
         return {
@@ -126,7 +127,7 @@ def evaluate_query(
             expected_keywords=expected_keywords,
             feedback_k=feedback_k,
         )
-        second_pass = agent.chatAgent(query, search_mode)
+        second_pass = agent.chatAgent(query, search_mode, force_research=force_research)
         if isinstance(second_pass, PaperSearchResult) and second_pass.papers:
             after = second_pass
             status = second_pass.status
@@ -184,6 +185,7 @@ def main() -> None:
     parser.add_argument("--simulate-feedback", action="store_true")
     parser.add_argument("--feedback-k", type=int, default=5)
     parser.add_argument("--modes", default="balanced", help="Comma-separated modes or 'all'.")
+    parser.add_argument("--force-research", action="store_true", help="Bypass intent routing and force research pipeline.")
     args = parser.parse_args()
 
     dataset = load_jsonl(Path(args.dataset))
@@ -213,6 +215,7 @@ def main() -> None:
                     simulate_feedback=args.simulate_feedback,
                     feedback_k=max(1, args.feedback_k),
                     search_mode=mode,
+                    force_research=args.force_research,
                 )
             )
         rows.extend(mode_rows)

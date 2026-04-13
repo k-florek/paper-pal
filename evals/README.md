@@ -81,6 +81,12 @@ Run baseline vs upgraded (feedback-adaptive) evaluation and generate a markdown 
 python -m evals.run_ab_compare --dataset evals/datasets/retrieval_eval.jsonl --backend ollama --modes all --feedback-k 5 --out-dir evals/results --prefix ab
 ```
 
+For Bedrock robustness testing, force the research pipeline during benchmark runs:
+
+```bash
+python -m evals.run_ab_compare --dataset evals/datasets/retrieval_eval.jsonl --backend aws_bedrock --modes all --feedback-k 5 --force-research --out-dir evals/results --prefix ab_bedrock
+```
+
 This produces:
 - `evals/results/ab_baseline.jsonl`
 - `evals/results/ab_upgraded.jsonl`

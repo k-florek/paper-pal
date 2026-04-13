@@ -83,6 +83,10 @@ _TERM_EXPANSIONS: dict[str, list[str]] = {
     "ai": ["artificial intelligence", "machine learning"],
     "ml": ["machine learning", "deep learning"],
 }
+_RESEARCH_HINT_TOKENS = {
+    "paper", "papers", "study", "studies", "trial", "trials", "meta-analysis", "mechanism",
+    "treatment", "therapy", "evidence", "review", "pubmed", "disease", "outcome", "model",
+}
 
 # ---------------------------------------------------------------------------
 # Tool-call utilities
@@ -147,6 +151,16 @@ def _sanitize_search_results(
     """
     valid: list[str] = []
     for batch in raw_results:
+        stripped_batch = batch.strip()
+        if (
+            not stripped_batch
+            or stripped_batch == "No results found."
+            or stripped_batch.startswith("PubMed search failed:")
+            or stripped_batch.startswith("PubMed fetch failed:")
+        ):
+            logger.info("[session=%s] skipping non-paper tool output: %r", session, stripped_batch[:120])
+            continue
+
         for block in batch.split("\n\n---\n\n"):
             block = block.strip()
             if _PAPER_BLOCK_RE.fullmatch(block):
@@ -414,6 +428,17 @@ def _apply_diversity_controls(papers: list["Paper"]) -> list["Paper"]:
         paper.index = idx
     return filtered
 
+
+def _looks_research_query(user_input: str) -> bool:
+    """Heuristic guardrail for cases where intent LLM under-classifies research asks."""
+    tokens = _tokenize(user_input)
+    if not tokens:
+        return False
+    if len(tokens & _RESEARCH_HINT_TOKENS) >= 1:
+        return True
+    # Longer domain-like prompts are likely research asks even without explicit keywords.
+    return len(tokens) >= 5
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -574,6 +599,7 @@ class Agent:
         self,
         user_input: str,
         search_mode: Optional[SearchMode] = None,
+        force_research: bool = False,
     ) -> AgentTextResponse | PaperSearchResult:
         """Process *user_input* and return either a plain reply or ranked papers.
 
@@ -588,7 +614,7 @@ class Agent:
             self._search_mode = search_mode
         messages = self._build_context_messages(chatSystemPrompt, user_input)
 
-        decision = self._classify_intent(user_input)
+        decision = IntentDecision(intent="RESEARCH", confidence=1.0) if force_research else self._classify_intent(user_input)
         logger.info(
             "[session=%s] route | intent=%s confidence=%.2f ambiguous=%s needs_clarification=%s",
             self.session,
@@ -597,6 +623,12 @@ class Agent:
             decision.ambiguous,
             decision.needs_clarification,
         )
+
+        if decision.intent == "CONVERSATIONAL" and _looks_research_query(user_input):
+            logger.info("[session=%s] overriding CONVERSATIONAL -> RESEARCH via heuristic", self.session)
+            decision.intent = "RESEARCH"
+            decision.needs_clarification = False
+            decision.ambiguous = False
 
         if decision.intent == "CONVERSATIONAL" and not decision.needs_clarification:
             reply = self._conversational_reply(messages, user_input)
@@ -701,17 +733,9 @@ class Agent:
         tool_calls = response.tool_calls or _parse_text_tool_calls(response.content, self.session)
 
         if not tool_calls:
-            # Model chose not to call a tool — treat as conversational
-            return AgentTextResponse(
-                message=self._conversational_reply(messages, user_input, prefetched=response.content),
-                status="conversational",
-                reason="no_tool_call",
-                telemetry={
-                    "pipeline": "research",
-                    "tool_calls_detected": 0,
-                    "duration_sec": round(time.perf_counter() - pipeline_start, 4),
-                },
-            )
+            # Bedrock/tool-call fallback: run a direct retrieval pass from user input.
+            logger.info("[session=%s] no tool call detected; using direct-search fallback", self.session)
+            tool_calls = [{"name": "searchPubMed", "args": {"query": user_input, "limit": 12}}]
 
         raw_results, search_attempts = self._execute_tool_calls(tool_calls)
 

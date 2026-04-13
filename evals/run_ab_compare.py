@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--feedback-k", type=int, default=5)
     parser.add_argument("--out-dir", default="evals/results")
     parser.add_argument("--prefix", default="ab")
+    parser.add_argument("--force-research", action="store_true")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -43,6 +44,8 @@ def main() -> None:
         "--output",
         str(baseline_path),
     ]
+    if args.force_research:
+        baseline_cmd.append("--force-research")
 
     upgraded_cmd = [
         sys.executable,
@@ -60,6 +63,8 @@ def main() -> None:
         "--output",
         str(upgraded_path),
     ]
+    if args.force_research:
+        upgraded_cmd.append("--force-research")
 
     report_cmd = [
         sys.executable,
