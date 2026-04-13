@@ -48,3 +48,4 @@ This prints `gold_precision_at_5` and `gold_ndcg_at_10`.
 
 - `run_intent_eval.py` currently calls the agent's routing method directly to isolate classifier quality.
 - `run_retrieval_eval.py` is a lightweight proxy and should be complemented by human-labeled relevance judgments.
+- During interactive app usage, paper-level feedback is captured via `POST /api/feedback` and fed into deterministic pre-ranking for the active session.

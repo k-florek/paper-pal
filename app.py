@@ -76,6 +76,20 @@ class ChatResponse(BaseModel):
     papers: Optional[list[PaperOut]] = None
 
 
+class FeedbackRequest(BaseModel):
+    session_id: str
+    paper_url: str
+    paper_title: str
+    query: str
+    relevant: bool
+    note: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    status: str
+    message: str
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     session_id = request.session_id or str(uuid.uuid4())
@@ -140,6 +154,23 @@ async def chat(request: ChatRequest):
         reason=None,
         papers=None,
     )
+
+
+@app.post("/api/feedback", response_model=FeedbackResponse)
+async def feedback(request: FeedbackRequest):
+    if request.session_id not in _sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    agent = _sessions[request.session_id]
+    agent.record_feedback(
+        paper_url=request.paper_url,
+        paper_title=request.paper_title,
+        query=request.query,
+        relevant=request.relevant,
+        note=request.note,
+    )
+
+    return FeedbackResponse(status="ok", message="Feedback recorded")
 
 
 @app.get("/api/config")

@@ -410,6 +410,39 @@
       line-height: 1.5;
     }
 
+    .paper-card-feedback {
+      margin-top: 0.55rem;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .feedback-btn {
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-dim);
+      border-radius: 999px;
+      font-size: 0.68rem;
+      padding: 0.15rem 0.5rem;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .feedback-btn:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .feedback-btn.active-positive {
+      border-color: #34d399;
+      color: #34d399;
+    }
+
+    .feedback-btn.active-negative {
+      border-color: #f87171;
+      color: #f87171;
+    }
+
     /* Query separator */
     .query-separator {
       display: flex;
@@ -622,13 +655,62 @@
           ${tagsHtml ? `<div class="paper-card-meta">${tagsHtml}</div>` : ''}
           <div class="paper-card-relevance">${escapeHtml(paper.relevance)}</div>
           ${paper.evidence ? `<div class="paper-card-evidence"><strong>Evidence:</strong> ${escapeHtml(paper.evidence)}</div>` : ''}
+          <div class="paper-card-feedback">
+            <button class="feedback-btn" data-feedback="positive">Relevant</button>
+            <button class="feedback-btn" data-feedback="negative">Not relevant</button>
+          </div>
         `;
+
+        const [positiveBtn, negativeBtn] = card.querySelectorAll('.feedback-btn');
+        positiveBtn.addEventListener('click', () => {
+          sendFeedback({
+            paperUrl: paper.url || '',
+            paperTitle: paper.title || '',
+            query: queryLabel,
+            relevant: true,
+            note: '',
+          });
+          positiveBtn.classList.add('active-positive');
+          negativeBtn.classList.remove('active-negative');
+        });
+
+        negativeBtn.addEventListener('click', () => {
+          sendFeedback({
+            paperUrl: paper.url || '',
+            paperTitle: paper.title || '',
+            query: queryLabel,
+            relevant: false,
+            note: '',
+          });
+          negativeBtn.classList.add('active-negative');
+          positiveBtn.classList.remove('active-positive');
+        });
 
         papersList.appendChild(card);
       });
 
       updatePapersCount();
       papersList.scrollTop = papersList.scrollHeight;
+    }
+
+    async function sendFeedback({ paperUrl, paperTitle, query, relevant, note }) {
+      if (!sessionId) return;
+      try {
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: sessionId,
+            paper_url: paperUrl,
+            paper_title: paperTitle,
+            query,
+            relevant,
+            note,
+          }),
+        });
+      } catch (err) {
+        console.error('Feedback submit failed:', err);
+      }
     }
 
     // ── Send ──────────────────────────────────────────────────

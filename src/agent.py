@@ -228,6 +228,8 @@ def _pre_rank_blocks(
     title_url_map: dict[str, str],
     *,
     top_n: int,
+    token_preferences: dict[str, float],
+    url_preferences: dict[str, float],
     session: str,
 ) -> tuple[str, dict[str, str]]:
     """Deterministically pre-rank blocks and keep top candidates for LLM ranking."""
@@ -241,6 +243,17 @@ def _pre_rank_blocks(
         parsed = _parse_paper_block(block)
         title = parsed.get("Title", "")
         score = _score_block(query_tokens, parsed)
+
+        url = parsed.get("URL", "")
+        if url in url_preferences:
+            score += url_preferences[url]
+
+        feedback_tokens = _tokenize(
+            " ".join([parsed.get("Title", ""), parsed.get("MeSH", ""), parsed.get("Abstract", "")])
+        )
+        for token in feedback_tokens:
+            score += token_preferences.get(token, 0.0)
+
         scored.append((score, block, title))
 
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -375,6 +388,9 @@ class Agent:
         self._history_summary: str = ""
         self._max_history_turns: int = _DEFAULT_MAX_HISTORY_TURNS
         self._pre_rank_top_n: int = 20
+        self._token_preferences: dict[str, float] = {}
+        self._url_preferences: dict[str, float] = {}
+        self._feedback_events: list[dict[str, str | bool]] = []
 
         config = backend_config or {}
         try:
@@ -537,6 +553,8 @@ class Agent:
             combined,
             title_url_map,
             top_n=self._pre_rank_top_n,
+            token_preferences=self._token_preferences,
+            url_preferences=self._url_preferences,
             session=self.session,
         )
 
@@ -637,6 +655,37 @@ class Agent:
         self.conversation_history.append(("human", str(user_input)))
         self.conversation_history.append(("assistant", str(assistant_output)))
         self._compact_history_if_needed()
+
+    def record_feedback(
+        self,
+        *,
+        paper_url: str,
+        paper_title: str,
+        query: str,
+        relevant: bool,
+        note: Optional[str] = None,
+    ) -> None:
+        """Store session feedback and update lightweight preference weights."""
+        delta = 1.5 if relevant else -1.5
+        if paper_url:
+            self._url_preferences[paper_url] = self._url_preferences.get(paper_url, 0.0) + delta
+
+        source_text = " ".join([paper_title or "", query or "", note or ""])
+        for token in _tokenize(source_text):
+            self._token_preferences[token] = self._token_preferences.get(token, 0.0) + (0.2 if relevant else -0.2)
+
+        self._feedback_events.append(
+            {
+                "paper_url": paper_url,
+                "paper_title": paper_title,
+                "query": query,
+                "relevant": relevant,
+                "note": note or "",
+            }
+        )
+        # Keep recent events only to avoid unbounded in-memory growth.
+        if len(self._feedback_events) > 200:
+            self._feedback_events = self._feedback_events[-200:]
 
     def _build_context_messages(self, system_prompt: str, user_input: str) -> list[tuple[str, str]]:
         """Build model input with summarized older context + recent turn window."""
