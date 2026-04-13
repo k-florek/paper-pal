@@ -192,6 +192,8 @@ def main() -> None:
     dataset = load_jsonl(Path(args.dataset))
     backend_config = load_backend_config(Path(args.config), args.backend)
     backend_config = {**backend_config, "sanitizer_mode": args.sanitizer_mode}
+    if args.backend == "aws_bedrock":
+        backend_config = {**backend_config, "ranker_strict_json": True}
     modes = VALID_MODES if args.modes.strip().lower() == "all" else [m.strip() for m in args.modes.split(",") if m.strip()]
     invalid_modes = [m for m in modes if m not in VALID_MODES]
     if invalid_modes:

@@ -86,3 +86,31 @@ Your job:
 9. Assign sequential 1-based index values to the papers starting from 1 where the 1 paper is the best and most relevant to the user.
 10. Do NOT set url to 'N/A' if a URL is present in the input.
 """
+
+rankerRepairSystemPrompt = """
+You convert malformed ranker output into STRICT JSON for this schema:
+{
+  "papers": [
+    {
+      "index": 1,
+      "title": "...",
+      "authors": "...",
+      "year": "...",
+      "journal": "...",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/<pmid>/",
+      "relevance": "...",
+      "confidence": 0.0,
+      "evidence": "..."
+    }
+  ],
+  "message": null,
+  "status": "ranked",
+  "reason": null
+}
+
+Rules:
+- Return JSON only. No markdown, no prose.
+- If unsure, keep only clearly extractable papers.
+- If no valid papers can be recovered, return:
+  {"papers": [], "message": "No relevant papers found for your query.", "status": "no_results", "reason": "ranker_repair_empty"}
+"""

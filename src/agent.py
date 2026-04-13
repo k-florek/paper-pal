@@ -14,6 +14,7 @@ from src.prompts import (
     chatSystemPrompt,
     clarificationSystemPrompt,
     intentSystemPrompt,
+    rankerRepairSystemPrompt,
     rankerSystemPrompt,
 )
 
@@ -258,31 +259,59 @@ def _extract_result_from_raw(raw_msg, session: str) -> Optional["PaperSearchResu
     if not content or not isinstance(content, str):
         return None
 
-    match = _FENCED_JSON_RE.search(content) or _BARE_JSON_RE.search(content)
-    if not match:
+    value = _decode_first_json_value(content)
+    if value is None:
         logger.warning("[session=%s] no JSON object found in raw ranker response", session)
         return None
 
     try:
-        data = json.loads(match.group("json"))
-        return PaperSearchResult(**data)
+        if isinstance(value, dict):
+            if "papers" in value:
+                return PaperSearchResult(**value)
+            if "results" in value and isinstance(value["results"], list):
+                return PaperSearchResult(papers=value["results"])
+        if isinstance(value, list):
+            return PaperSearchResult(papers=value)
     except Exception as exc:
         logger.warning("[session=%s] fallback JSON parse failed: %s", session, exc)
         return None
+    return None
 
 
 def _extract_json_payload(content: str) -> Optional[dict]:
     """Extract a JSON object from content that may include fences or prose."""
     if not content:
         return None
-    match = _FENCED_JSON_RE.search(content) or _BARE_JSON_RE.search(content)
-    if not match:
+    value = _decode_first_json_value(content)
+    return value if isinstance(value, dict) else None
+
+
+def _decode_first_json_value(content: str):
+    """Decode the first JSON value found in free-form model output.
+
+    Handles fenced blocks and trailing non-JSON text by using raw_decode from
+    the first opening brace/bracket candidate.
+    """
+    if not content:
         return None
-    try:
-        payload = json.loads(match.group("json"))
-        return payload if isinstance(payload, dict) else None
-    except Exception:
-        return None
+
+    candidates: list[str] = []
+    fenced = _FENCED_JSON_RE.search(content)
+    if fenced:
+        candidates.append(fenced.group("json"))
+    candidates.append(content)
+
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        for i, ch in enumerate(candidate):
+            if ch not in "[{":
+                continue
+            try:
+                value, _ = decoder.raw_decode(candidate[i:])
+                return value
+            except Exception:
+                continue
+    return None
 
 
 def _tokenize(text: str) -> set[str]:
@@ -628,6 +657,7 @@ class Agent:
         self._pre_rank_top_n: int = 20
         self._search_mode: SearchMode = "balanced"
         self._allow_tolerant_sanitizer: bool = True
+        self._ranker_strict_json: bool = backend == "aws_bedrock"
         self._token_preferences: dict[str, float] = {}
         self._url_preferences: dict[str, float] = {}
         self._feedback_events: list[dict[str, str | bool]] = []
@@ -643,6 +673,7 @@ class Agent:
             self._pre_rank_top_n = 20
         sanitizer_mode = str(config.get("sanitizer_mode", "tolerant")).strip().lower()
         self._allow_tolerant_sanitizer = sanitizer_mode != "strict"
+        self._ranker_strict_json = bool(config.get("ranker_strict_json", self._ranker_strict_json))
         chat_llm = build_llm(backend, config, modelType.CHAT)
         reasoning_llm = build_llm(backend, config, modelType.REASONING)
 
@@ -958,8 +989,12 @@ class Agent:
         block_count = len(combined.split("\n\n---\n\n"))
         logger.info("[session=%s] handing %d paper(s) to ranker", self.session, block_count)
 
+        ranker_system_prompt = rankerSystemPrompt
+        if self._ranker_strict_json:
+            ranker_system_prompt += "\n\nReturn STRICT JSON only. No markdown. No prose."
+
         raw = self._ranker_agent.invoke([
-            ("system", rankerSystemPrompt),
+            ("system", ranker_system_prompt),
             ("human", f"User query: {user_input}\n\nPubMed results:\n{combined}"),
         ])
 
@@ -971,6 +1006,11 @@ class Agent:
                 self.session, raw.get("parsing_error"),
             )
             ranked = _extract_result_from_raw(raw.get("raw"), self.session)
+
+        if ranked is None:
+            repaired = self._repair_ranker_output(raw.get("raw"), user_input)
+            if repaired is not None:
+                ranked = repaired
 
         if ranked is None:
             logger.warning("[session=%s] JSON fallback failed; returning empty result", self.session)
@@ -1003,6 +1043,31 @@ class Agent:
         else:
             ranked.status = "ranked"
         return ranked
+
+    def _repair_ranker_output(self, raw_msg, user_input: str) -> Optional[PaperSearchResult]:
+        """Ask the chat model to repair malformed ranker output into strict JSON."""
+        content = getattr(raw_msg, "content", None)
+        if not content or not isinstance(content, str):
+            return None
+
+        try:
+            repaired = self._llm.invoke(
+                [
+                    ("system", rankerRepairSystemPrompt),
+                    (
+                        "human",
+                        f"User query: {user_input}\n\nMalformed ranker output:\n{content}",
+                    ),
+                ]
+            ).content
+            value = _decode_first_json_value(str(repaired))
+            if isinstance(value, dict):
+                return PaperSearchResult(**value)
+            if isinstance(value, list):
+                return PaperSearchResult(papers=value)
+        except Exception as exc:
+            logger.warning("[session=%s] ranker repair failed: %s", self.session, exc)
+        return None
 
     def _conversational_reply(
         self, messages: list, user_input: str, *, prefetched: str = None
