@@ -1,0 +1,6 @@
+{"query":"Hi there!","expected_intent":"CONVERSATIONAL"}
+{"query":"Thanks, that helps.","expected_intent":"CONVERSATIONAL"}
+{"query":"Find recent papers on CRISPR off-target effects in human cells","expected_intent":"RESEARCH"}
+{"query":"What RCT evidence exists for semaglutide in obesity?","expected_intent":"RESEARCH"}
+{"query":"Can you explain what you do?","expected_intent":"CONVERSATIONAL"}
+{"query":"Literature on long COVID immune dysregulation since 2022","expected_intent":"RESEARCH"}

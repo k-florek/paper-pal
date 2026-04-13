@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paper Pal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:           #0d0f1a;
+      --surface:      #151828;
+      --surface2:     #1e2235;
+      --border:       #272c45;
+      --accent:       #6c63ff;
+      --accent-hover: #7c73ff;
+      --accent-soft:  rgba(108, 99, 255, 0.15);
+      --accent2:      #a78bfa;
+      --text:         #e2e8f0;
+      --text-dim:     #8892aa;
+      --user-bubble:  #5b52e0;
+      --header-h:     68px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    header {
+      height: var(--header-h);
+      background: linear-gradient(135deg, #1a1640 0%, #2c2875 50%, #1a1640 100%);
+      border-bottom: 1px solid rgba(108, 99, 255, 0.25);
+      display: flex;
+      align-items: center;
+      padding: 0 2rem;
+      gap: 1rem;
+      flex-shrink: 0;
+      box-shadow: 0 4px 32px rgba(108, 99, 255, 0.18);
+    }
+
+    .header-logo {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      box-shadow: 0 0 18px rgba(108, 99, 255, 0.5);
+      flex-shrink: 0;
+    }
+
+    .header-text h1 {
+      font-size: 1.45rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #fff 30%, var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+    }
+
+    .header-text p {
+      font-size: 0.75rem;
+      color: rgba(167, 139, 250, 0.75);
+      margin-top: 2px;
+      font-weight: 400;
+    }
+
+    .header-badge {
+      margin-left: auto;
+      font-size: 0.7rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(108, 99, 255, 0.4);
+      color: var(--accent2);
+      background: rgba(108, 99, 255, 0.1);
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Main layout ─────────────────────────────────────────── */
+    .main {
+      display: grid;
+      grid-template-columns: 60% 40%;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Chat panel ──────────────────────────────────────────── */
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 1.5rem 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+      scroll-behavior: smooth;
+    }
+
+    .chat-messages::-webkit-scrollbar { width: 5px; }
+    .chat-messages::-webkit-scrollbar-track { background: transparent; }
+    .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .message {
+      display: flex;
+      gap: 0.7rem;
+      max-width: 88%;
+      animation: msgIn 0.28s ease;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      flex-direction: row-reverse;
+    }
+
+    .message.assistant { align-self: flex-start; }
+
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      font-size: 0.65rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      align-self: flex-end;
+    }
+
+    .message.user     .msg-avatar { background: var(--user-bubble); color: #fff; }
+    .message.assistant .msg-avatar {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+    }
+
+    .msg-bubble {
+      padding: 0.7rem 1rem;
+      border-radius: 16px;
+      font-size: 0.875rem;
+      line-height: 1.65;
+    }
+
+    .message.user .msg-bubble {
+      background: var(--user-bubble);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.assistant .msg-bubble {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.assistant .msg-bubble.papers-found {
+      background: rgba(108, 99, 255, 0.1);
+      border-color: rgba(108, 99, 255, 0.35);
+    }
+
+    /* Typing indicator */
+    .typing-row { padding: 0.4rem 1.5rem 0.6rem; min-height: 42px; display: flex; align-items: center; }
+
+    .typing-indicator {
+      display: none;
+      align-items: center;
+      gap: 5px;
+      padding: 0.55rem 0.85rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      border-bottom-left-radius: 4px;
+    }
+
+    .typing-indicator.active { display: flex; }
+
+    .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      animation: bounce 1.3s infinite;
+    }
+    .dot:nth-child(2) { animation-delay: 0.18s; }
+    .dot:nth-child(3) { animation-delay: 0.36s; }
+
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+
+    /* Input area */
+    .chat-input-area {
+      padding: 0.85rem 1.25rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      gap: 0.65rem;
+      align-items: flex-end;
+    }
+
+    .chat-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.65rem 1rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.875rem;
+      resize: none;
+      min-height: 42px;
+      max-height: 120px;
+      outline: none;
+      transition: border-color 0.2s;
+      line-height: 1.5;
+    }
+
+    .chat-input:focus { border-color: var(--accent); }
+    .chat-input::placeholder { color: var(--text-dim); }
+
+    .send-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover { background: var(--accent-hover); box-shadow: 0 0 16px rgba(108, 99, 255, 0.45); }
+    .send-btn:active { transform: scale(0.93); }
+    .send-btn:disabled { background: var(--border); cursor: not-allowed; box-shadow: none; }
+
+    .send-btn svg { width: 17px; height: 17px; fill: currentColor; }
+
+    /* ── Papers panel ────────────────────────────────────────── */
+    .papers-panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .papers-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .papers-header-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+    }
+
+    .papers-count {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--accent2);
+      background: rgba(167, 139, 250, 0.12);
+      border: 1px solid rgba(167, 139, 250, 0.2);
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+    }
+
+    .papers-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+
+    .papers-list::-webkit-scrollbar { width: 5px; }
+    .papers-list::-webkit-scrollbar-track { background: transparent; }
+    .papers-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* Empty state */
+    .no-papers {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.8rem;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-dim);
+    }
+
+    .no-papers-icon { font-size: 2.8rem; opacity: 0.25; }
+    .no-papers-text { font-size: 0.82rem; opacity: 0.55; line-height: 1.5; }
+
+    /* Paper card */
+    .paper-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.95rem 1rem;
+      cursor: default;
+      transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+      animation: msgIn 0.3s ease;
+    }
+
+    .paper-card:hover {
+      border-color: rgba(108, 99, 255, 0.55);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 20px rgba(108, 99, 255, 0.12);
+    }
+
+    .paper-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.45rem;
+    }
+
+    .paper-index-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      background: var(--accent-soft);
+      padding: 0.15rem 0.45rem;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+
+    .paper-card-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.45;
+      margin-bottom: 0.45rem;
+    }
+
+    .paper-card-title a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .paper-card-title a:hover { color: var(--accent2); }
+
+    .paper-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-bottom: 0.55rem;
+    }
+
+    .meta-tag {
+      font-size: 0.67rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    .paper-card-relevance {
+      font-size: 0.76rem;
+      color: var(--text-dim);
+      line-height: 1.55;
+      border-left: 2px solid var(--accent);
+      padding-left: 0.55rem;
+      font-style: italic;
+    }
+
+    /* Query separator */
+    .query-separator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.1rem 0;
+    }
+
+    .query-separator span {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      opacity: 0.6;
+      white-space: nowrap;
+    }
+
+    .query-separator hr {
+      flex: 1;
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-logo">📄</div>
+    <div class="header-text">
+      <h1>Paper Pal</h1>
+      <p>AI-Powered Academic Research Assistant</p>
+    </div>
+    <span class="header-badge">PubMed · Ollama</span>
+  </header>
+
+  <div class="main">
+
+    <!-- ── Chat Panel ── -->
+    <div class="chat-panel">
+      <div class="chat-messages" id="chatMessages">
+        <div class="message assistant">
+          <div class="msg-avatar">PP</div>
+          <div class="msg-bubble">
+            Hello! I'm <strong>Paper Pal</strong>, your academic research assistant.<br />
+            Ask me about any scientific topic and I'll find relevant papers from PubMed. 📚
+          </div>
+        </div>
+      </div>
+
+      <div class="typing-row">
+        <div class="typing-indicator" id="typingIndicator">
+          <div class="dot"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <textarea
+          class="chat-input"
+          id="chatInput"
+          placeholder="Ask about a research topic…"
+          rows="1"
+        ></textarea>
+        <button class="send-btn" id="sendBtn" title="Send (Enter)">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Papers Panel ── -->
+    <div class="papers-panel">
+      <div class="papers-header">
+        <span class="papers-header-title">Research Papers</span>
+        <span class="papers-count" id="papersCount">0 papers</span>
+      </div>
+      <div class="papers-list" id="papersList">
+        <div class="no-papers" id="noPapers">
+          <div class="no-papers-icon">🔬</div>
+          <div class="no-papers-text">Papers found during your session<br />will appear here</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    'use strict';
+
+    let sessionId = null;
+    let totalPapers = 0;
+
+    const chatMessages   = document.getElementById('chatMessages');
+    const chatInput      = document.getElementById('chatInput');
+    const sendBtn        = document.getElementById('sendBtn');
+    const typingEl       = document.getElementById('typingIndicator');
+    const papersList     = document.getElementById('papersList');
+    const papersCountEl  = document.getElementById('papersCount');
+    const noPapersEl     = document.getElementById('noPapers');
+
+    // Auto-resize textarea
+    chatInput.addEventListener('input', () => {
+      chatInput.style.height = 'auto';
+      chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+    });
+
+    // Enter to send, Shift+Enter for new line
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    // ── Helpers ───────────────────────────────────────────────
+
+    function escapeHtml(str) {
+      const d = document.createElement('div');
+      d.appendChild(document.createTextNode(str ?? ''));
+      return d.innerHTML;
+    }
+
+    function isSafePubMedUrl(url) {
+      return typeof url === 'string' &&
+        /^https:\/\/pubmed\.ncbi\.nlm\.nih\.gov\/\d+\/$/.test(url);
+    }
+
+    function scrollChat() {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // ── Chat ──────────────────────────────────────────────────
+
+    function appendMessage(role, html, extraClass = '') {
+      const row = document.createElement('div');
+      row.className = `message ${role}`;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'msg-avatar';
+      avatar.textContent = role === 'user' ? 'You' : 'PP';
+
+      const bubble = document.createElement('div');
+      bubble.className = `msg-bubble${extraClass ? ' ' + extraClass : ''}`;
+      bubble.innerHTML = html;
+
+      row.appendChild(avatar);
+      row.appendChild(bubble);
+      chatMessages.appendChild(row);
+      scrollChat();
+      return bubble;
+    }
+
+    // ── Papers ────────────────────────────────────────────────
+
+    function updatePapersCount() {
+      papersCountEl.textContent = `${totalPapers} paper${totalPapers !== 1 ? 's' : ''}`;
+    }
+
+    function addQuerySeparator(queryText) {
+      const sep = document.createElement('div');
+      sep.className = 'query-separator';
+      sep.innerHTML = `<hr /><span>${escapeHtml(queryText)}</span><hr />`;
+      papersList.appendChild(sep);
+    }
+
+    function addPaperCards(papers, queryLabel) {
+      if (!papers || papers.length === 0) return;
+
+      noPapersEl.style.display = 'none';
+
+      if (totalPapers > 0) {
+        addQuerySeparator(queryLabel);
+      }
+
+      papers.forEach((paper) => {
+        totalPapers++;
+
+        const card = document.createElement('div');
+        card.className = 'paper-card';
+
+        // Title — link only if URL passes validation
+        const titleHtml = isSafePubMedUrl(paper.url)
+          ? `<a href="${paper.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(paper.title)}</a>`
+          : escapeHtml(paper.title);
+
+        // Meta tags
+        const tags = [];
+        if (paper.year   && paper.year    !== 'N/A') tags.push(paper.year);
+        if (paper.journal && paper.journal !== 'N/A') tags.push(paper.journal);
+        if (paper.authors && paper.authors !== 'N/A') {
+          const parts = paper.authors.split(',');
+          tags.push(parts[0].trim() + (parts.length > 1 ? ' et al.' : ''));
+        }
+
+        const tagsHtml = tags
+          .map(t => `<span class="meta-tag">${escapeHtml(t)}</span>`)
+          .join('');
+
+        card.innerHTML = `
+          <div class="paper-card-header">
+            <span class="paper-index-badge">Paper ${totalPapers}</span>
+          </div>
+          <div class="paper-card-title">${titleHtml}</div>
+          ${tagsHtml ? `<div class="paper-card-meta">${tagsHtml}</div>` : ''}
+          <div class="paper-card-relevance">${escapeHtml(paper.relevance)}</div>
+        `;
+
+        papersList.appendChild(card);
+      });
+
+      updatePapersCount();
+      papersList.scrollTop = papersList.scrollHeight;
+    }
+
+    // ── Send ──────────────────────────────────────────────────
+
+    async function sendMessage() {
+      const message = chatInput.value.trim();
+      if (!message || sendBtn.disabled) return;
+
+      chatInput.value = '';
+      chatInput.style.height = 'auto';
+      sendBtn.disabled = true;
+
+      appendMessage('user', escapeHtml(message));
+
+      typingEl.classList.add('active');
+      scrollChat();
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, message }),
+        });
+
+        if (!res.ok) {
+          const detail = await res.text();
+          throw new Error(`Server error ${res.status}: ${detail}`);
+        }
+
+        const data = await res.json();
+        sessionId = data.session_id;
+
+        typingEl.classList.remove('active');
+
+        const status = data.status || 'conversational';
+
+        if (data.papers && data.papers.length > 0) {
+          const n = data.papers.length;
+          appendMessage(
+            'assistant',
+            `Found <strong>${n}</strong> relevant paper${n !== 1 ? 's' : ''} — see the panel on the right ✨`,
+            'papers-found'
+          );
+          addPaperCards(data.papers, message);
+        } else if (status === 'clarifying' && data.message) {
+          appendMessage('assistant', escapeHtml(data.message));
+        } else if (status === 'failed') {
+          const reason = data.reason ? ` (${escapeHtml(data.reason)})` : '';
+          appendMessage('assistant', `I hit an issue while processing your request${reason}. Please refine and try again.`);
+        } else if (status === 'no_results') {
+          appendMessage('assistant', escapeHtml(data.message || 'No relevant papers found for your query.'));
+        } else if (data.message) {
+          appendMessage('assistant', escapeHtml(data.message));
+        } else {
+          appendMessage('assistant', 'No relevant papers found for your query.');
+        }
+      } catch (err) {
+        typingEl.classList.remove('active');
+        appendMessage('assistant', `⚠️ ${escapeHtml(err.message)}`);
+      } finally {
+        sendBtn.disabled = false;
+        chatInput.focus();
+      }
+    }
+  </script>
+</body>
+</html>
