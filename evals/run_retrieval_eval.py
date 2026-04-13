@@ -106,6 +106,10 @@ def evaluate_query(
             "ndcg_at_10": 0.0,
             "min_results_pass": False,
             "status": getattr(baseline, "status", "non_paper"),
+            "before": {"returned": 0, "precision_at_5": 0.0, "ndcg_at_10": 0.0},
+            "after": {"returned": 0, "precision_at_5": 0.0, "ndcg_at_10": 0.0},
+            "delta": {"precision_at_5": 0.0, "ndcg_at_10": 0.0, "returned": 0},
+            "feedback_events": 0,
             "papers": [] if include_papers else None,
         }
 
