@@ -19,6 +19,26 @@ from src.prompts import (
 
 logger = logging.getLogger(__name__)
 
+SearchMode = Literal["balanced", "clinical", "mechanism", "latest", "reviews"]
+
+_SEARCH_MODE_GUIDANCE: dict[SearchMode, str] = {
+    "balanced": "Search mode is BALANCED: optimize for overall relevance and coverage.",
+    "clinical": (
+        "Search mode is CLINICAL: prioritize human studies, trials, treatment outcomes, and evidence quality. "
+        "Prefer clinical terminology and intervention/comparator/outcome framing where possible."
+    ),
+    "mechanism": (
+        "Search mode is MECHANISM: prioritize molecular, cellular, pathway, and mechanistic evidence. "
+        "Bias toward studies explaining biological causality and mechanisms."
+    ),
+    "latest": (
+        "Search mode is LATEST: prioritize recency and rapidly evolving evidence while maintaining topical relevance."
+    ),
+    "reviews": (
+        "Search mode is REVIEWS: prioritize systematic reviews, meta-analyses, and high-level synthesis papers first."
+    ),
+}
+
 # ---------------------------------------------------------------------------
 # Compiled patterns
 # ---------------------------------------------------------------------------
@@ -388,6 +408,7 @@ class Agent:
         self._history_summary: str = ""
         self._max_history_turns: int = _DEFAULT_MAX_HISTORY_TURNS
         self._pre_rank_top_n: int = 20
+        self._search_mode: SearchMode = "balanced"
         self._token_preferences: dict[str, float] = {}
         self._url_preferences: dict[str, float] = {}
         self._feedback_events: list[dict[str, str | bool]] = []
@@ -425,7 +446,11 @@ class Agent:
     # Public API
     # ------------------------------------------------------------------
 
-    def chatAgent(self, user_input: str) -> AgentTextResponse | PaperSearchResult:
+    def chatAgent(
+        self,
+        user_input: str,
+        search_mode: Optional[SearchMode] = None,
+    ) -> AgentTextResponse | PaperSearchResult:
         """Process *user_input* and return either a plain reply or ranked papers.
 
         Returns:
@@ -435,6 +460,8 @@ class Agent:
         logger.info("[session=%s] >>> user: %s", self.session, user_input)
 
         start = time.perf_counter()
+        if search_mode in _SEARCH_MODE_GUIDANCE:
+            self._search_mode = search_mode
         messages = self._build_context_messages(chatSystemPrompt, user_input)
 
         decision = self._classify_intent(user_input)
@@ -690,6 +717,7 @@ class Agent:
     def _build_context_messages(self, system_prompt: str, user_input: str) -> list[tuple[str, str]]:
         """Build model input with summarized older context + recent turn window."""
         messages: list[tuple[str, str]] = [("system", system_prompt)]
+        messages.append(("system", _SEARCH_MODE_GUIDANCE[self._search_mode]))
         if self._history_summary:
             messages.append((
                 "system",

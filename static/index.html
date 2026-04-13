@@ -221,6 +221,37 @@
       align-items: flex-end;
     }
 
+    .mode-row {
+      padding: 0.65rem 1.25rem 0.15rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+
+    .mode-btn {
+      font-size: 0.68rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.18rem 0.58rem;
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+
+    .mode-btn:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .mode-btn.active {
+      border-color: var(--accent2);
+      background: rgba(167, 139, 250, 0.16);
+      color: var(--accent2);
+    }
+
     .chat-input {
       flex: 1;
       background: var(--bg);
@@ -498,6 +529,14 @@
         </div>
       </div>
 
+      <div class="mode-row" id="modeRow">
+        <button class="mode-btn active" data-mode="balanced">Balanced</button>
+        <button class="mode-btn" data-mode="clinical">Clinical</button>
+        <button class="mode-btn" data-mode="mechanism">Mechanism</button>
+        <button class="mode-btn" data-mode="latest">Latest</button>
+        <button class="mode-btn" data-mode="reviews">Reviews First</button>
+      </div>
+
       <div class="chat-input-area">
         <textarea
           class="chat-input"
@@ -534,6 +573,7 @@
 
     let sessionId = null;
     let totalPapers = 0;
+    let currentSearchMode = 'balanced';
 
     const chatMessages   = document.getElementById('chatMessages');
     const chatInput      = document.getElementById('chatInput');
@@ -542,6 +582,7 @@
     const papersList     = document.getElementById('papersList');
     const papersCountEl  = document.getElementById('papersCount');
     const noPapersEl     = document.getElementById('noPapers');
+    const modeRow        = document.getElementById('modeRow');
 
     // Auto-resize textarea
     chatInput.addEventListener('input', () => {
@@ -558,6 +599,16 @@
     });
 
     sendBtn.addEventListener('click', sendMessage);
+
+    modeRow.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      const mode = target.getAttribute('data-mode');
+      if (!mode) return;
+      currentSearchMode = mode;
+      modeRow.querySelectorAll('.mode-btn').forEach((btn) => btn.classList.remove('active'));
+      target.classList.add('active');
+    });
 
     // ── Helpers ───────────────────────────────────────────────
 
@@ -732,7 +783,7 @@
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, message }),
+          body: JSON.stringify({ session_id: sessionId, message, search_mode: currentSearchMode }),
         });
 
         if (!res.ok) {

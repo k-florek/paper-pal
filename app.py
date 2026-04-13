@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -11,6 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.agent import Agent, AgentTextResponse, Backend, PaperSearchResult
+
+SearchMode = Literal["balanced", "clinical", "mechanism", "latest", "reviews"]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +51,7 @@ _sessions: dict[str, Agent] = {}
 class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     message: str
+    search_mode: SearchMode = "balanced"
     # If omitted, the default_backend from config.json is used.
     backend: Optional[Backend] = None
     # If omitted, the backend's section from config.json is used.
@@ -110,7 +113,7 @@ async def chat(request: ChatRequest):
     agent = _sessions[session_id]
 
     try:
-        result = agent.chatAgent(request.message)
+        result = agent.chatAgent(request.message, request.search_mode)
     except Exception as e:
         logger.exception("Agent error in session %s", session_id)
         raise HTTPException(status_code=500, detail=str(e))

@@ -125,6 +125,7 @@ Send a message and receive papers or a conversational reply.
 {
   "session_id": "optional-uuid-to-continue-a-conversation",
   "message": "CRISPR off-target effects in human cells",
+  "search_mode": "balanced",
   "backend": "ollama",
   "backend_config": {}
 }
@@ -132,6 +133,7 @@ Send a message and receive papers or a conversational reply.
 
 - `backend` — overrides `default_backend` from `config.json` for this session
 - `backend_config` — key/value overrides merged on top of the `config.json` section for this backend
+- `search_mode` — optional retrieval preset: `balanced`, `clinical`, `mechanism`, `latest`, `reviews`
 
 **Response:**
 ```json
