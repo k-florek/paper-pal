@@ -191,10 +191,12 @@ export OPENAI_API_KEY="your-key-here"
 ## How It Works
 
 1. **Intent detection** — a lightweight LLM call classifies the message as `RESEARCH` or `CONVERSATIONAL`. Non-research messages skip the search pipeline entirely.
-2. **Search** — the chat agent decides the optimal PubMed query and calls `searchPubMed` (max one call per turn).
-3. **Validation** — every result block is matched against a strict regex. Malformed blocks (potential prompt injections) are discarded and logged.
-4. **Ranking** — a second structured-output LLM call filters irrelevant papers, deduplicates, and adds a per-paper relevance sentence.
-5. **Response** — the ranked list is returned to the client as structured JSON.
+2. **Query shaping** — the agent rewrites plain-language queries into PubMed-friendly expressions with controlled synonym/acronym expansion and mode-aware filters.
+3. **Search** — bounded multi-pass retrieval is used: primary search plus at most one broaden fallback and one precision fallback.
+4. **Validation** — every result block is matched against a strict regex. Malformed blocks (potential prompt injections) are discarded and logged.
+5. **Ranking** — deterministic pre-ranking narrows candidates, then a structured-output LLM ranks papers with relevance, confidence, and evidence.
+6. **Diversity control** — near-duplicate titles and over-concentration from a single journal are suppressed before final output.
+7. **Response** — the ranked list is returned to the client as structured JSON.
 
 
 ## Tuning the Samplers

@@ -72,6 +72,17 @@ _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in",
     "is", "it", "of", "on", "or", "that", "the", "to", "was", "were", "what", "with",
 }
+_GENERIC_BROAD_TERMS = {
+    "cancer", "therapy", "treatment", "disease", "infection", "biology", "mechanism", "immune", "genetics",
+}
+_TERM_EXPANSIONS: dict[str, list[str]] = {
+    "covid": ["COVID-19", "SARS-CoV-2"],
+    "sars-cov-2": ["COVID-19", "SARS-CoV-2"],
+    "crispr": ["CRISPR", "gene editing"],
+    "ngs": ["NGS", "next-generation sequencing", "high-throughput sequencing"],
+    "ai": ["artificial intelligence", "machine learning"],
+    "ml": ["machine learning", "deep learning"],
+}
 
 # ---------------------------------------------------------------------------
 # Tool-call utilities
@@ -291,6 +302,117 @@ def _pre_rank_blocks(
     )
 
     return "\n\n---\n\n".join(kept_blocks), kept_map
+
+
+def _count_result_blocks(result: str) -> int:
+    """Count formatted paper blocks in a tool response string."""
+    if not result or result.startswith("PubMed ") or result == "No results found.":
+        return 0
+    return len([part for part in result.split("\n\n---\n\n") if part.strip()])
+
+
+def _adaptive_limit(query: str, mode: SearchMode, requested: int) -> int:
+    """Estimate retrieval breadth and choose a bounded search limit."""
+    query_tokens = _tokenize(query)
+    broad_hits = len(query_tokens & _GENERIC_BROAD_TERMS)
+    has_boolean = " AND " in query.upper() or " OR " in query.upper()
+    is_broad = broad_hits >= 2 or len(query_tokens) < 4 or not has_boolean
+
+    if mode == "latest":
+        target = 25 if is_broad else 20
+    elif mode == "reviews":
+        target = 18 if is_broad else 14
+    elif mode == "clinical":
+        target = 20 if is_broad else 15
+    else:
+        target = 22 if is_broad else 12
+
+    return max(5, min(25, max(requested, target)))
+
+
+def _rewrite_pubmed_query(raw_query: str, mode: SearchMode) -> str:
+    """Rewrite plain-language queries into a more retrieval-friendly PubMed query."""
+    query = (raw_query or "").strip()
+    if not query:
+        return query
+
+    upper = query.upper()
+    if " AND " in upper or " OR " in upper:
+        rewritten = query
+    else:
+        tokens = list(_tokenize(query))[:6]
+        concepts: list[str] = []
+        for token in tokens:
+            expansions = _TERM_EXPANSIONS.get(token, [])
+            if expansions:
+                opts = " OR ".join([f'"{token}"'] + [f'"{term}"' for term in expansions])
+                concepts.append(f"({opts})")
+            else:
+                concepts.append(f'"{token}"')
+        rewritten = " AND ".join(concepts[:4]) if concepts else query
+
+    if mode == "clinical":
+        rewritten = f"({rewritten}) AND (clinical OR trial OR patient)"
+    elif mode == "mechanism":
+        rewritten = f"({rewritten}) AND (mechanism OR pathway OR molecular OR cellular)"
+    elif mode == "latest":
+        rewritten = f"({rewritten}) AND (2020:3000[pdat])"
+    elif mode == "reviews":
+        rewritten = f"({rewritten}) AND (\"systematic review\" OR \"meta-analysis\")"
+
+    return rewritten
+
+
+def _broaden_query(query: str) -> str:
+    """Generate one broader fallback query when initial search is too sparse."""
+    q = query.replace(" AND ", " OR ")
+    # Keep fallback bounded and simple.
+    return q
+
+
+def _precision_query(query: str, mode: SearchMode) -> str:
+    """Generate one narrower fallback query when results are too broad."""
+    if mode == "reviews":
+        return f"({query}) AND (\"systematic review\" OR \"meta-analysis\")"
+    if mode == "latest":
+        return f"({query}) AND (2022:3000[pdat])"
+    if mode == "clinical":
+        return f"({query}) AND (randomized OR placebo OR patient)"
+    if mode == "mechanism":
+        return f"({query}) AND (pathway OR signaling OR mechanism)"
+    return f"({query}) AND (human OR mechanism)"
+
+
+def _title_signature(title: str) -> str:
+    """Create a compact signature for near-duplicate title suppression."""
+    toks = sorted(_tokenize(title))
+    return " ".join(toks[:6])
+
+
+def _apply_diversity_controls(papers: list["Paper"]) -> list["Paper"]:
+    """Reduce near-duplicates and over-concentration from a single journal."""
+    seen_signatures: set[str] = set()
+    per_journal: dict[str, int] = {}
+    filtered: list["Paper"] = []
+
+    for paper in papers:
+        signature = _title_signature(paper.title or "")
+        if signature and signature in seen_signatures:
+            continue
+
+        journal_key = (paper.journal or "unknown").strip().lower()
+        count = per_journal.get(journal_key, 0)
+        if count >= 2:
+            continue
+
+        if signature:
+            seen_signatures.add(signature)
+        per_journal[journal_key] = count + 1
+        filtered.append(paper)
+
+    for idx, paper in enumerate(filtered, start=1):
+        paper.index = idx
+    return filtered
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -588,7 +710,7 @@ class Agent:
         return self._rank_results(user_input, combined, title_url_map)
 
     def _execute_tool_calls(self, tool_calls: list[dict]) -> list[str]:
-        """Run each searchPubMed tool call and return the raw result strings."""
+        """Run each searchPubMed tool call with bounded multi-pass retrieval."""
         results: list[str] = []
         for call in tool_calls:
             if call["name"] != "searchPubMed":
@@ -597,11 +719,38 @@ class Agent:
             if not args.get("query", "").strip():
                 logger.info("[session=%s] skipping searchPubMed — empty query", self.session)
                 continue
-            logger.info("[session=%s] searchPubMed(%s)", self.session, args)
-            result = searchPubMed.invoke(args)
-            logger.info("[session=%s] searchPubMed returned %d chars", self.session, len(result))
-            logger.info(result)
-            results.append(result)
+
+            raw_query = args.get("query", "")
+            requested_limit = int(args.get("limit", 10)) if isinstance(args.get("limit"), int) else 10
+            rewritten = _rewrite_pubmed_query(raw_query, self._search_mode)
+            adaptive_limit = _adaptive_limit(rewritten, self._search_mode, requested_limit)
+
+            logger.info(
+                "[session=%s] search primary | mode=%s limit=%d query=%r",
+                self.session,
+                self._search_mode,
+                adaptive_limit,
+                rewritten,
+            )
+            primary = searchPubMed.invoke({"query": rewritten, "limit": adaptive_limit})
+            primary_count = _count_result_blocks(primary)
+            results.append(primary)
+
+            # Fallback 1: broaden once if sparse/empty.
+            if primary_count < 3:
+                broadened = _broaden_query(rewritten)
+                logger.info("[session=%s] search broaden fallback query=%r", self.session, broadened)
+                fallback = searchPubMed.invoke({"query": broadened, "limit": adaptive_limit})
+                results.append(fallback)
+
+            # Fallback 2: precision once if result set appears broad/full.
+            if primary_count >= max(8, adaptive_limit - 2):
+                precise = _precision_query(rewritten, self._search_mode)
+                precise_limit = max(8, adaptive_limit // 2)
+                logger.info("[session=%s] search precision fallback query=%r", self.session, precise)
+                fallback = searchPubMed.invoke({"query": precise, "limit": precise_limit})
+                results.append(fallback)
+
         return results
 
     def _rank_results(
@@ -645,6 +794,8 @@ class Agent:
             paper.confidence = max(0.0, min(1.0, float(paper.confidence)))
             if not paper.evidence:
                 paper.evidence = paper.relevance
+
+        ranked.papers = _apply_diversity_controls(ranked.papers)
 
         logger.info(
             "[session=%s] ranker returned %d paper(s) | message=%r",
