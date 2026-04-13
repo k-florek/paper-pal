@@ -73,6 +73,19 @@ python -m evals.run_failure_checks
 
 Release gate checklist is provided in [evals/release_checklist.md](evals/release_checklist.md).
 
+## One-Command A/B Compare
+
+Run baseline vs upgraded (feedback-adaptive) evaluation and generate a markdown report:
+
+```bash
+python -m evals.run_ab_compare --dataset evals/datasets/retrieval_eval.jsonl --backend ollama --modes all --feedback-k 5 --out-dir evals/results --prefix ab
+```
+
+This produces:
+- `evals/results/ab_baseline.jsonl`
+- `evals/results/ab_upgraded.jsonl`
+- `evals/results/ab_report.md`
+
 ## Notes
 
 - `run_intent_eval.py` currently calls the agent's routing method directly to isolate classifier quality.
