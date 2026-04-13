@@ -39,6 +39,13 @@ _SEARCH_MODE_GUIDANCE: dict[SearchMode, str] = {
         "Search mode is REVIEWS: prioritize systematic reviews, meta-analyses, and high-level synthesis papers first."
     ),
 }
+_FEEDBACK_MODE_MULTIPLIER: dict[SearchMode, float] = {
+    "balanced": 1.0,
+    "clinical": 0.55,
+    "mechanism": 1.1,
+    "latest": 0.45,
+    "reviews": 0.9,
+}
 
 # ---------------------------------------------------------------------------
 # Compiled patterns
@@ -1101,15 +1108,35 @@ class Agent:
         query: str,
         relevant: bool,
         note: Optional[str] = None,
+        search_mode: Optional[SearchMode] = None,
+        confidence: Optional[float] = None,
+        score_weight: float = 1.0,
     ) -> None:
         """Store session feedback and update lightweight preference weights."""
-        delta = 1.5 if relevant else -1.5
+        mode = search_mode if search_mode in _SEARCH_MODE_GUIDANCE else self._search_mode
+        mode_factor = _FEEDBACK_MODE_MULTIPLIER.get(mode, 1.0)
+
+        try:
+            conf = float(confidence) if confidence is not None else 0.7
+        except (TypeError, ValueError):
+            conf = 0.7
+        conf = max(0.0, min(1.0, conf))
+        # Damp noisy feedback and avoid extreme swings on uncertain papers.
+        conf_factor = 0.5 + (0.5 * conf)
+
+        try:
+            weight = max(0.1, min(2.0, float(score_weight)))
+        except (TypeError, ValueError):
+            weight = 1.0
+
+        delta = (1.5 if relevant else -1.5) * mode_factor * conf_factor * weight
         if paper_url:
             self._url_preferences[paper_url] = self._url_preferences.get(paper_url, 0.0) + delta
 
         source_text = " ".join([paper_title or "", query or "", note or ""])
+        token_delta = (0.2 if relevant else -0.2) * mode_factor * conf_factor * weight
         for token in _tokenize(source_text):
-            self._token_preferences[token] = self._token_preferences.get(token, 0.0) + (0.2 if relevant else -0.2)
+            self._token_preferences[token] = self._token_preferences.get(token, 0.0) + token_delta
 
         self._feedback_events.append(
             {
@@ -1118,6 +1145,9 @@ class Agent:
                 "query": query,
                 "relevant": relevant,
                 "note": note or "",
+                "search_mode": mode,
+                "confidence": conf,
+                "score_weight": weight,
             }
         )
         # Keep recent events only to avoid unbounded in-memory growth.

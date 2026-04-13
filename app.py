@@ -87,6 +87,8 @@ class FeedbackRequest(BaseModel):
     query: str
     relevant: bool
     note: Optional[str] = None
+    search_mode: SearchMode = "balanced"
+    confidence: Optional[float] = None
 
 
 class FeedbackResponse(BaseModel):
@@ -175,6 +177,8 @@ async def feedback(request: FeedbackRequest):
         query=request.query,
         relevant=request.relevant,
         note=request.note,
+        search_mode=request.search_mode,
+        confidence=request.confidence,
     )
 
     return FeedbackResponse(status="ok", message="Feedback recorded")

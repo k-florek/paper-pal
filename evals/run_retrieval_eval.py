@@ -8,6 +8,13 @@ from evals.metrics import ndcg_at_k, precision_at_k
 from src.agent import Agent, PaperSearchResult
 
 VALID_MODES = ["balanced", "clinical", "mechanism", "latest", "reviews"]
+MODE_FEEDBACK_CONFIG = {
+    "balanced": {"min_conf": 0.55, "min_gain": 0.34, "pos_weight": 1.0, "neg_weight": 0.7},
+    "clinical": {"min_conf": 0.72, "min_gain": 0.50, "pos_weight": 0.55, "neg_weight": 0.35},
+    "mechanism": {"min_conf": 0.55, "min_gain": 0.34, "pos_weight": 1.1, "neg_weight": 0.7},
+    "latest": {"min_conf": 0.75, "min_gain": 0.50, "pos_weight": 0.5, "neg_weight": 0.25},
+    "reviews": {"min_conf": 0.60, "min_gain": 0.34, "pos_weight": 0.95, "neg_weight": 0.6},
+}
 
 
 def load_backend_config(config_path: Path, backend: str) -> dict:
@@ -63,9 +70,11 @@ def apply_simulated_feedback(
     response: PaperSearchResult,
     expected_keywords: list[str],
     feedback_k: int,
+    search_mode: str,
 ) -> int:
     """Apply heuristic positive/negative feedback from top-k returned papers."""
     applied = 0
+    cfg = MODE_FEEDBACK_CONFIG.get(search_mode, MODE_FEEDBACK_CONFIG["balanced"])
     for paper in response.papers[:feedback_k]:
         combined = " ".join([
             paper.title or "",
@@ -73,13 +82,23 @@ def apply_simulated_feedback(
             paper.relevance or "",
             paper.evidence or "",
         ])
-        relevant = keyword_gain(combined, expected_keywords) > 0
+        gain = keyword_gain(combined, expected_keywords)
+        confidence = float(getattr(paper, "confidence", 0.5) or 0.5)
+        if confidence < cfg["min_conf"]:
+            continue
+
+        relevant = gain >= cfg["min_gain"]
+        score_weight = cfg["pos_weight"] if relevant else cfg["neg_weight"]
+
         agent.record_feedback(
             paper_url=paper.url or "",
             paper_title=paper.title or "",
             query=query,
             relevant=relevant,
             note="simulated_eval_feedback",
+            search_mode=search_mode,
+            confidence=confidence,
+            score_weight=score_weight,
         )
         applied += 1
     return applied
@@ -126,6 +145,7 @@ def evaluate_query(
             response=baseline,
             expected_keywords=expected_keywords,
             feedback_k=feedback_k,
+            search_mode=search_mode,
         )
         second_pass = agent.chatAgent(query, search_mode, force_research=force_research)
         if isinstance(second_pass, PaperSearchResult) and second_pass.papers:

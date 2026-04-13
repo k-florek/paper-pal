@@ -719,6 +719,8 @@
             paperTitle: paper.title || '',
             query: queryLabel,
             relevant: true,
+            searchMode: currentSearchMode,
+            confidence: Number(paper.confidence),
             note: '',
           });
           positiveBtn.classList.add('active-positive');
@@ -731,6 +733,8 @@
             paperTitle: paper.title || '',
             query: queryLabel,
             relevant: false,
+            searchMode: currentSearchMode,
+            confidence: Number(paper.confidence),
             note: '',
           });
           negativeBtn.classList.add('active-negative');
@@ -744,7 +748,7 @@
       papersList.scrollTop = papersList.scrollHeight;
     }
 
-    async function sendFeedback({ paperUrl, paperTitle, query, relevant, note }) {
+    async function sendFeedback({ paperUrl, paperTitle, query, relevant, searchMode, confidence, note }) {
       if (!sessionId) return;
       try {
         await fetch('/api/feedback', {
@@ -756,6 +760,8 @@
             paper_title: paperTitle,
             query,
             relevant,
+            search_mode: searchMode || 'balanced',
+            confidence: Number.isNaN(confidence) ? null : confidence,
             note,
           }),
         });
