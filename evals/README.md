@@ -18,6 +18,12 @@ Run:
 python -m evals.run_retrieval_eval --dataset evals/datasets/retrieval_eval.jsonl --backend ollama --output evals/results/retrieval_eval.jsonl
 ```
 
+Run across all search modes:
+
+```bash
+python -m evals.run_retrieval_eval --dataset evals/datasets/retrieval_eval.jsonl --backend ollama --modes all --output evals/results/retrieval_eval_modes.jsonl
+```
+
 To include paper details for human judging:
 
 ```bash
@@ -40,6 +46,7 @@ This script computes coarse proxy metrics per query:
 - `precision_at_5` from keyword overlap flags
 - `ndcg_at_10` from keyword-overlap gains
 - `min_results_pass` coverage check
+- `mode_summaries` aggregate output when one or multiple modes are evaluated
 
 ## Gold-Labeled Evaluation
 
@@ -55,6 +62,16 @@ python -m evals.score_gold_eval --predictions evals/results/retrieval_eval.jsonl
 ```
 
 This prints `gold_precision_at_5` and `gold_ndcg_at_10`.
+
+## Failure Checks
+
+Run lightweight failure-mode checks:
+
+```bash
+python -m evals.run_failure_checks
+```
+
+Release gate checklist is provided in [evals/release_checklist.md](evals/release_checklist.md).
 
 ## Notes
 

@@ -452,6 +452,7 @@ class PaperSearchResult(BaseModel):
     message: Optional[str] = Field(default=None)
     status: Literal["ranked", "no_results", "failed"] = "ranked"
     reason: Optional[str] = Field(default=None)
+    telemetry: Optional[dict] = Field(default=None)
 
     @field_validator("papers", mode="before")
     @classmethod
@@ -490,6 +491,7 @@ class AgentTextResponse(BaseModel):
     message: str
     status: Literal["conversational", "clarifying", "failed"] = "conversational"
     reason: Optional[str] = None
+    telemetry: Optional[dict] = None
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -598,23 +600,51 @@ class Agent:
 
         if decision.intent == "CONVERSATIONAL" and not decision.needs_clarification:
             reply = self._conversational_reply(messages, user_input)
+            duration = time.perf_counter() - start
             logger.info("[session=%s] turn completed in %.3fs", self.session, time.perf_counter() - start)
-            return AgentTextResponse(message=reply, status="conversational")
+            return AgentTextResponse(
+                message=reply,
+                status="conversational",
+                telemetry={
+                    "search_mode": self._search_mode,
+                    "intent": decision.intent,
+                    "intent_confidence": decision.confidence,
+                    "duration_sec": round(duration, 4),
+                },
+            )
 
         if decision.needs_clarification:
             question = self._clarify_query(user_input, decision)
             self._remember_turn(user_input, question)
+            duration = time.perf_counter() - start
             logger.info("[session=%s] turn completed in %.3fs", self.session, time.perf_counter() - start)
             return AgentTextResponse(
                 message=question,
                 status="clarifying",
                 reason="missing_search_constraints",
+                telemetry={
+                    "search_mode": self._search_mode,
+                    "intent": decision.intent,
+                    "intent_confidence": decision.confidence,
+                    "needs_clarification": True,
+                    "duration_sec": round(duration, 4),
+                },
             )
 
         result = self._research_pipeline(messages, user_input)
         if isinstance(result, PaperSearchResult):
             summary = result.message or f"Returned {len(result.papers)} paper(s)."
             self._remember_turn(user_input, summary)
+            if result.telemetry is None:
+                result.telemetry = {}
+            result.telemetry.update(
+                {
+                    "search_mode": self._search_mode,
+                    "intent": decision.intent,
+                    "intent_confidence": decision.confidence,
+                    "duration_sec": round(time.perf_counter() - start, 4),
+                }
+            )
         logger.info("[session=%s] turn completed in %.3fs", self.session, time.perf_counter() - start)
         return result
 
@@ -661,6 +691,7 @@ class Agent:
 
     def _research_pipeline(self, messages: list, user_input: str) -> AgentTextResponse | PaperSearchResult:
         """Run the search → sanitize → rank pipeline for a research query."""
+        pipeline_start = time.perf_counter()
         response = self._search_agent.invoke(messages)
         logger.info(
             "[session=%s] search agent | content=%r | tool_calls=%s",
@@ -675,9 +706,14 @@ class Agent:
                 message=self._conversational_reply(messages, user_input, prefetched=response.content),
                 status="conversational",
                 reason="no_tool_call",
+                telemetry={
+                    "pipeline": "research",
+                    "tool_calls_detected": 0,
+                    "duration_sec": round(time.perf_counter() - pipeline_start, 4),
+                },
             )
 
-        raw_results = self._execute_tool_calls(tool_calls)
+        raw_results, search_attempts = self._execute_tool_calls(tool_calls)
 
         if not raw_results:
             # All tool calls were skipped or returned nothing — fall back to plain reply
@@ -685,6 +721,12 @@ class Agent:
                 message="I could not complete the PubMed search. Please try again or refine your query.",
                 status="failed",
                 reason="search_failed",
+                telemetry={
+                    "pipeline": "research",
+                    "tool_calls_detected": len(tool_calls),
+                    "search_attempts": search_attempts,
+                    "duration_sec": round(time.perf_counter() - pipeline_start, 4),
+                },
             )
 
         combined, title_url_map = _sanitize_search_results(raw_results, self.session)
@@ -695,6 +737,13 @@ class Agent:
                 message="No trusted results could be extracted from the PubMed response.",
                 status="failed",
                 reason="sanitization_rejected_all",
+                telemetry={
+                    "pipeline": "research",
+                    "tool_calls_detected": len(tool_calls),
+                    "search_attempts": search_attempts,
+                    "valid_blocks": 0,
+                    "duration_sec": round(time.perf_counter() - pipeline_start, 4),
+                },
             )
 
         combined, title_url_map = _pre_rank_blocks(
@@ -707,11 +756,24 @@ class Agent:
             session=self.session,
         )
 
-        return self._rank_results(user_input, combined, title_url_map)
+        result = self._rank_results(user_input, combined, title_url_map)
+        if result.telemetry is None:
+            result.telemetry = {}
+        result.telemetry.update(
+            {
+                "pipeline": "research",
+                "tool_calls_detected": len(tool_calls),
+                "search_attempts": search_attempts,
+                "valid_blocks": len([part for part in combined.split("\n\n---\n\n") if part.strip()]),
+                "duration_sec": round(time.perf_counter() - pipeline_start, 4),
+            }
+        )
+        return result
 
-    def _execute_tool_calls(self, tool_calls: list[dict]) -> list[str]:
+    def _execute_tool_calls(self, tool_calls: list[dict]) -> tuple[list[str], list[dict]]:
         """Run each searchPubMed tool call with bounded multi-pass retrieval."""
         results: list[str] = []
+        attempts: list[dict] = []
         for call in tool_calls:
             if call["name"] != "searchPubMed":
                 continue
@@ -735,6 +797,14 @@ class Agent:
             primary = searchPubMed.invoke({"query": rewritten, "limit": adaptive_limit})
             primary_count = _count_result_blocks(primary)
             results.append(primary)
+            attempts.append(
+                {
+                    "stage": "primary",
+                    "query": rewritten,
+                    "limit": adaptive_limit,
+                    "result_blocks": primary_count,
+                }
+            )
 
             # Fallback 1: broaden once if sparse/empty.
             if primary_count < 3:
@@ -742,6 +812,14 @@ class Agent:
                 logger.info("[session=%s] search broaden fallback query=%r", self.session, broadened)
                 fallback = searchPubMed.invoke({"query": broadened, "limit": adaptive_limit})
                 results.append(fallback)
+                attempts.append(
+                    {
+                        "stage": "broaden",
+                        "query": broadened,
+                        "limit": adaptive_limit,
+                        "result_blocks": _count_result_blocks(fallback),
+                    }
+                )
 
             # Fallback 2: precision once if result set appears broad/full.
             if primary_count >= max(8, adaptive_limit - 2):
@@ -750,8 +828,16 @@ class Agent:
                 logger.info("[session=%s] search precision fallback query=%r", self.session, precise)
                 fallback = searchPubMed.invoke({"query": precise, "limit": precise_limit})
                 results.append(fallback)
+                attempts.append(
+                    {
+                        "stage": "precision",
+                        "query": precise,
+                        "limit": precise_limit,
+                        "result_blocks": _count_result_blocks(fallback),
+                    }
+                )
 
-        return results
+        return results, attempts
 
     def _rank_results(
         self, user_input: str, combined: str, title_url_map: dict[str, str]

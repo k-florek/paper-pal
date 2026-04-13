@@ -77,6 +77,7 @@ class ChatResponse(BaseModel):
     message: Optional[str] = None
     reason: Optional[str] = None
     papers: Optional[list[PaperOut]] = None
+    telemetry: Optional[dict] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -139,6 +140,7 @@ async def chat(request: ChatRequest):
             message=result.message,
             reason=result.reason,
             papers=papers,
+            telemetry=result.telemetry,
         )
 
     if isinstance(result, AgentTextResponse):
@@ -148,6 +150,7 @@ async def chat(request: ChatRequest):
             message=result.message,
             reason=result.reason,
             papers=None,
+            telemetry=result.telemetry,
         )
 
     return ChatResponse(
@@ -156,6 +159,7 @@ async def chat(request: ChatRequest):
         message=str(result),
         reason=None,
         papers=None,
+        telemetry=None,
     )
 
 
