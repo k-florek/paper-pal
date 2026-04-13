@@ -47,6 +47,11 @@ _TEXT_TOOL_CALL_RE = re.compile(
 # Finds a JSON object in LLM output — fenced block preferred over bare match
 _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(?P<json>\{.*?\})\s*```", re.DOTALL)
 _BARE_JSON_RE = re.compile(r"(?P<json>\{.*\})", re.DOTALL)
+_TOKEN_RE = re.compile(r"[A-Za-z0-9\-]+")
+_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in",
+    "is", "it", "of", "on", "or", "that", "the", "to", "was", "were", "what", "with",
+}
 
 # ---------------------------------------------------------------------------
 # Tool-call utilities
@@ -165,6 +170,95 @@ def _extract_json_payload(content: str) -> Optional[dict]:
     except Exception:
         return None
 
+
+def _tokenize(text: str) -> set[str]:
+    """Tokenize text into normalized keyword tokens."""
+    if not text:
+        return set()
+    return {
+        token.lower()
+        for token in _TOKEN_RE.findall(text)
+        if len(token) > 2 and token.lower() not in _STOPWORDS
+    }
+
+
+def _parse_paper_block(block: str) -> dict[str, str]:
+    """Parse key/value lines from a validated paper block."""
+    parsed: dict[str, str] = {}
+    for line in block.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        parsed[key.strip()] = value.strip()
+    return parsed
+
+
+def _score_block(query_tokens: set[str], parsed: dict[str, str]) -> float:
+    """Score a paper block deterministically before LLM reranking."""
+    title_tokens = _tokenize(parsed.get("Title", ""))
+    mesh_tokens = _tokenize(parsed.get("MeSH", ""))
+    abstract_tokens = _tokenize(parsed.get("Abstract", ""))
+
+    title_overlap = len(query_tokens & title_tokens)
+    mesh_overlap = len(query_tokens & mesh_tokens)
+    abstract_overlap = len(query_tokens & abstract_tokens)
+
+    score = (title_overlap * 3.0) + (mesh_overlap * 2.0) + (abstract_overlap * 1.0)
+
+    publication_type = parsed.get("Type", "").lower()
+    if "meta-analysis" in publication_type or "systematic review" in publication_type:
+        score += 1.0
+    if "randomized" in publication_type or "clinical trial" in publication_type:
+        score += 0.8
+
+    year_value = parsed.get("Year", "")
+    try:
+        year = int(year_value[:4])
+        # Mild recency preference, without suppressing classic foundational work.
+        score += max(0.0, min(1.0, (year - 2015) * 0.08))
+    except (TypeError, ValueError):
+        pass
+
+    return score
+
+
+def _pre_rank_blocks(
+    user_input: str,
+    combined: str,
+    title_url_map: dict[str, str],
+    *,
+    top_n: int,
+    session: str,
+) -> tuple[str, dict[str, str]]:
+    """Deterministically pre-rank blocks and keep top candidates for LLM ranking."""
+    blocks = [block for block in combined.split("\n\n---\n\n") if block.strip()]
+    if len(blocks) <= top_n:
+        return combined, title_url_map
+
+    query_tokens = _tokenize(user_input)
+    scored: list[tuple[float, str, str]] = []
+    for block in blocks:
+        parsed = _parse_paper_block(block)
+        title = parsed.get("Title", "")
+        score = _score_block(query_tokens, parsed)
+        scored.append((score, block, title))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    kept = scored[:top_n]
+    kept_blocks = [item[1] for item in kept]
+    kept_titles = {item[2] for item in kept if item[2]}
+    kept_map = {title: url for title, url in title_url_map.items() if title in kept_titles}
+
+    logger.info(
+        "[session=%s] pre-ranker kept %d/%d papers (top_n=%d)",
+        session,
+        len(kept_blocks),
+        len(blocks),
+        top_n,
+    )
+
+    return "\n\n---\n\n".join(kept_blocks), kept_map
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -269,12 +363,17 @@ class Agent:
         self.conversation_history: list[tuple[str, str]] = []
         self._history_summary: str = ""
         self._max_history_turns: int = _DEFAULT_MAX_HISTORY_TURNS
+        self._pre_rank_top_n: int = 20
 
         config = backend_config or {}
         try:
             self._max_history_turns = max(2, int(config.get("max_history_turns", _DEFAULT_MAX_HISTORY_TURNS)))
         except (TypeError, ValueError):
             self._max_history_turns = _DEFAULT_MAX_HISTORY_TURNS
+        try:
+            self._pre_rank_top_n = max(5, int(config.get("pre_rank_top_n", 20)))
+        except (TypeError, ValueError):
+            self._pre_rank_top_n = 20
         chat_llm = build_llm(backend, config, modelType.CHAT)
         reasoning_llm = build_llm(backend, config, modelType.REASONING)
 
@@ -421,6 +520,14 @@ class Agent:
                 status="failed",
                 reason="sanitization_rejected_all",
             )
+
+        combined, title_url_map = _pre_rank_blocks(
+            user_input,
+            combined,
+            title_url_map,
+            top_n=self._pre_rank_top_n,
+            session=self.session,
+        )
 
         return self._rank_results(user_input, combined, title_url_map)
 

@@ -1,0 +1,5 @@
+{"query":"Long COVID neuroinflammation mechanisms", "expected_keywords":["long", "covid", "neuroinflammation"], "min_results":3}
+{"query":"Randomized trial evidence for semaglutide obesity treatment", "expected_keywords":["semaglutide", "obesity", "trial"], "min_results":3}
+{"query":"Meta-analysis of CRISPR off-target effects in human cells", "expected_keywords":["crispr", "off-target", "human"], "min_results":3}
+{"query":"SARS-CoV-2 evolution and immune escape variants", "expected_keywords":["sars", "cov", "immune", "escape"], "min_results":3}
+{"query":"Microbiome changes in inflammatory bowel disease", "expected_keywords":["microbiome", "inflammatory", "bowel", "disease"], "min_results":3}
