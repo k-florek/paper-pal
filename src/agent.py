@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import uuid
+from dataclasses import dataclass, field
 
 from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
@@ -95,6 +96,9 @@ _TERM_EXPANSIONS: dict[str, list[str]] = {
 _RESEARCH_HINT_TOKENS = {
     "paper", "papers", "study", "studies", "trial", "trials", "meta-analysis", "mechanism",
     "treatment", "therapy", "evidence", "review", "pubmed", "disease", "outcome", "model",
+}
+_NON_INFORMATIVE_REPLY_TOKENS = {
+    "idk", "unsure", "whatever", "anything", "no", "none", "n/a", "na", "dont", "don't",
 }
 
 # ---------------------------------------------------------------------------
@@ -544,6 +548,36 @@ def _looks_research_query(user_input: str) -> bool:
     # Longer domain-like prompts are likely research asks even without explicit keywords.
     return len(tokens) >= 5
 
+
+def _normalize_constraint(constraint: str) -> str:
+    """Normalize missing-constraint labels for stable overlap checks."""
+    return " ".join((constraint or "").strip().lower().split())
+
+
+def _is_non_informative_reply(user_input: str) -> bool:
+    """Detect very short clarification replies that add no useful scope."""
+    tokens = _tokenize(user_input)
+    if not tokens:
+        return True
+    if len(tokens) <= 2 and tokens <= _NON_INFORMATIVE_REPLY_TOKENS:
+        return True
+    return False
+
+
+def _select_clarification_constraints(
+    missing_constraints: list[str],
+    asked_constraints: list[str],
+) -> list[str]:
+    """Pick one highest-value unasked constraint for the next clarification turn."""
+    seen = {_normalize_constraint(item) for item in asked_constraints if item}
+    for constraint in missing_constraints:
+        normalized = _normalize_constraint(constraint)
+        if normalized and normalized not in seen:
+            return [constraint]
+    if missing_constraints:
+        return [missing_constraints[0]]
+    return ["population or study scope"]
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -635,6 +669,16 @@ _NO_RESULTS = PaperSearchResult(
 )
 _DEFAULT_MAX_HISTORY_TURNS = 10
 _MAX_SUMMARY_CHARS = 1800
+_MAX_CLARIFICATION_TURNS = 2
+
+
+@dataclass
+class ClarificationState:
+    """Tracks active clarification threads to avoid repetitive follow-ups."""
+
+    awaiting_answer: bool = False
+    turns: int = 0
+    asked_constraints: list[str] = field(default_factory=list)
 
 
 class Agent:
@@ -668,6 +712,7 @@ class Agent:
         self._token_preferences: dict[str, float] = {}
         self._url_preferences: dict[str, float] = {}
         self._feedback_events: list[dict[str, str | bool]] = []
+        self._clarification_state = ClarificationState()
 
         config = backend_config or {}
         try:
@@ -725,6 +770,27 @@ class Agent:
         messages = self._build_context_messages(chatSystemPrompt, user_input)
 
         decision = IntentDecision(intent="RESEARCH", confidence=1.0) if force_research else self._classify_intent(user_input)
+        clarification_follow_up = self._clarification_state.awaiting_answer
+        non_informative_follow_up = _is_non_informative_reply(user_input)
+
+        if clarification_follow_up and not non_informative_follow_up and decision.intent == "CONVERSATIONAL":
+            logger.info("[session=%s] clarification follow-up detected; forcing RESEARCH intent", self.session)
+            decision.intent = "RESEARCH"
+            decision.confidence = max(decision.confidence, 0.8)
+
+        if clarification_follow_up and decision.needs_clarification:
+            asked = {_normalize_constraint(c) for c in self._clarification_state.asked_constraints if c}
+            missing = {_normalize_constraint(c) for c in decision.missing_constraints if c}
+            repeated_constraint = bool(asked & missing)
+
+            if repeated_constraint and not non_informative_follow_up:
+                logger.info("[session=%s] suppressing repeated clarification for answered constraint", self.session)
+                decision.needs_clarification = False
+
+            if self._clarification_state.turns >= _MAX_CLARIFICATION_TURNS:
+                logger.info("[session=%s] clarification turn cap reached; proceeding to search", self.session)
+                decision.needs_clarification = False
+
         logger.info(
             "[session=%s] route | intent=%s confidence=%.2f ambiguous=%s needs_clarification=%s",
             self.session,
@@ -741,6 +807,7 @@ class Agent:
             decision.ambiguous = False
 
         if decision.intent == "CONVERSATIONAL" and not decision.needs_clarification:
+            self._reset_clarification_state()
             reply = self._conversational_reply(messages, user_input)
             duration = time.perf_counter() - start
             logger.info("[session=%s] turn completed in %.3fs", self.session, time.perf_counter() - start)
@@ -756,7 +823,15 @@ class Agent:
             )
 
         if decision.needs_clarification:
-            question = self._clarify_query(user_input, decision)
+            constraints_for_question = _select_clarification_constraints(
+                decision.missing_constraints,
+                self._clarification_state.asked_constraints,
+            )
+            question_decision = decision.model_copy(update={"missing_constraints": constraints_for_question})
+            question = self._clarify_query(user_input, question_decision)
+            self._clarification_state.awaiting_answer = True
+            self._clarification_state.turns += 1
+            self._clarification_state.asked_constraints.extend(constraints_for_question)
             self._remember_turn(user_input, question)
             duration = time.perf_counter() - start
             logger.info("[session=%s] turn completed in %.3fs", self.session, time.perf_counter() - start)
@@ -774,6 +849,7 @@ class Agent:
             )
 
         result = self._research_pipeline(messages, user_input)
+        self._reset_clarification_state()
         if isinstance(result, PaperSearchResult):
             summary = result.message or f"Returned {len(result.papers)} paper(s)."
             self._remember_turn(user_input, summary)
@@ -1158,6 +1234,13 @@ class Agent:
         """Build model input with summarized older context + recent turn window."""
         messages: list[tuple[str, str]] = [("system", system_prompt)]
         messages.append(("system", _SEARCH_MODE_GUIDANCE[self._search_mode]))
+        if self._clarification_state.awaiting_answer and self._clarification_state.asked_constraints:
+            asked = ", ".join(dict.fromkeys(self._clarification_state.asked_constraints))
+            messages.append((
+                "system",
+                "Clarification context: the assistant already asked about "
+                f"{asked}; treat a specific user reply as clarification, not a new broad query.",
+            ))
         if self._history_summary:
             messages.append((
                 "system",
@@ -1166,6 +1249,10 @@ class Agent:
         messages.extend(self.conversation_history)
         messages.append(("human", user_input))
         return messages
+
+    def _reset_clarification_state(self) -> None:
+        """Clear clarification tracking after a resolved turn."""
+        self._clarification_state = ClarificationState()
 
     def _compact_history_if_needed(self) -> None:
         """Keep only recent turns in-memory and summarize older context."""

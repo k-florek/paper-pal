@@ -65,6 +65,15 @@ def run_checks() -> list[tuple[str, bool]]:
     )
     checks.append(assert_true("pre_rank_top_n", len([x for x in kept.split("\n\n---\n\n") if x.strip()]) <= 3))
 
+    # 6) Clarification helpers should avoid repeated constraints and detect empty replies.
+    chosen = ag._select_clarification_constraints(
+        ["population", "study type", "timeframe"],
+        ["population"],
+    )
+    checks.append(assert_true("clarification_selects_unasked", chosen == ["study type"]))
+    checks.append(assert_true("clarification_non_informative_detected", ag._is_non_informative_reply("no")))
+    checks.append(assert_true("clarification_informative_detected", not ag._is_non_informative_reply("in humans globally")))
+
     return checks
 
 

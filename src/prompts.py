@@ -43,6 +43,10 @@ Rules:
 - intent=RESEARCH when the user asks about scientific evidence, papers, mechanisms, treatments, methods, or outcomes.
 - intent=CONVERSATIONAL for greetings, thanks, casual chat, or non-research requests.
 - needs_clarification=true when intent=RESEARCH and the query is broad/ambiguous enough that a search would likely be noisy.
+- If the previous assistant turn was a clarification question and the user now provides concrete scope
+  (population/species, disease subtype, study type, timeframe, or outcome), set needs_clarification=false.
+- Only keep needs_clarification=true after a clarification follow-up when the reply is still non-informative
+  (for example: "idk", "anything", "whatever", or empty).
 - Keep missing_constraints concise and practical (0 to 3 items).
 - No prose, no markdown, no code fences. JSON only.
 """

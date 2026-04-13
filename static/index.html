@@ -47,8 +47,8 @@
     }
 
     .header-logo {
-      width: 42px;
-      height: 42px;
+      width: 60px;
+      height: 60px;
       background: linear-gradient(135deg, var(--accent), var(--accent2));
       border-radius: 12px;
       display: flex;
@@ -57,6 +57,13 @@
       font-size: 1.3rem;
       box-shadow: 0 0 18px rgba(108, 99, 255, 0.5);
       flex-shrink: 0;
+    }
+
+    .header-logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
     }
 
     .header-text h1 {
@@ -449,29 +456,34 @@
     }
 
     .feedback-btn {
-      border: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.02);
-      color: var(--text-dim);
+      border: 1.5px solid rgba(108, 99, 255, 0.45);
+      background: rgba(108, 99, 255, 0.12);
+      color: #d9d5ff;
       border-radius: 999px;
       font-size: 0.68rem;
-      padding: 0.15rem 0.5rem;
+      font-weight: 600;
+      padding: 0.24rem 0.7rem;
+      min-height: 28px;
       cursor: pointer;
-      transition: border-color 0.2s, color 0.2s;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
     }
 
     .feedback-btn:hover {
       border-color: var(--accent);
       color: var(--text);
+      background: rgba(108, 99, 255, 0.22);
     }
 
     .feedback-btn.active-positive {
       border-color: #34d399;
       color: #34d399;
+      background: rgba(52, 211, 153, 0.14);
     }
 
     .feedback-btn.active-negative {
       border-color: #f87171;
       color: #f87171;
+      background: rgba(248, 113, 113, 0.14);
     }
 
     /* Query separator */
@@ -499,12 +511,12 @@
 <body>
 
   <header>
-    <div class="header-logo">📄</div>
+    <div class="header-logo"><img src="/static/paper_pal.svg" alt="Paper Pal logo" width="100" height="100" /></div>
     <div class="header-text">
       <h1>Paper Pal</h1>
-      <p>AI-Powered Academic Research Assistant</p>
+      <p>AI-Powered Research Assistant</p>
     </div>
-    <span class="header-badge">PubMed · Ollama</span>
+    <span class="header-badge">PubMed</span>
   </header>
 
   <div class="main">
@@ -515,7 +527,7 @@
         <div class="message assistant">
           <div class="msg-avatar">PP</div>
           <div class="msg-bubble">
-            Hello! I'm <strong>Paper Pal</strong>, your academic research assistant.<br />
+            Hello! I'm <strong>Paper Pal</strong>, your research assistant.<br />
             Ask me about any scientific topic and I'll find relevant papers from PubMed. 📚
           </div>
         </div>
