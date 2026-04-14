@@ -84,13 +84,29 @@
     }
 
     .header-badge {
-      margin-left: auto;
       font-size: 0.7rem;
       padding: 0.25rem 0.65rem;
       border-radius: 999px;
       border: 1px solid rgba(108, 99, 255, 0.4);
       color: var(--accent2);
       background: rgba(108, 99, 255, 0.1);
+      letter-spacing: 0.05em;
+    }
+
+    .header-badges {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .header-badge-model {
+      font-size: 0.7rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      color: #6ee7b7;
+      background: rgba(52, 211, 153, 0.08);
       letter-spacing: 0.05em;
     }
 
@@ -516,7 +532,10 @@
       <h1>Paper Pal</h1>
       <p>AI-Powered Research Assistant</p>
     </div>
-    <span class="header-badge">PubMed</span>
+    <div class="header-badges">
+      <span class="header-badge">PubMed</span>
+      <span class="header-badge-model" id="modelBadge">…</span>
+    </div>
   </header>
 
   <div class="main">
@@ -586,6 +605,23 @@
     let sessionId = null;
     let totalPapers = 0;
     let currentSearchMode = 'balanced';
+
+    // ── Model badge ───────────────────────────────────────────
+    (async () => {
+      const badge = document.getElementById('modelBadge');
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) throw new Error('config fetch failed');
+        const cfg = await res.json();
+        const backend = cfg.default_backend || 'unknown';
+        const backendCfg = cfg[backend] || {};
+        const model = backendCfg.chat_model || backendCfg.model_id || backendCfg.model || '';
+        const label = backend.replace('_', ' ');
+        badge.textContent = model ? `${label} · ${model}` : label;
+      } catch {
+        badge.textContent = 'model unknown';
+      }
+    })();
 
     const chatMessages   = document.getElementById('chatMessages');
     const chatInput      = document.getElementById('chatInput');
