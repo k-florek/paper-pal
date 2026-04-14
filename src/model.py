@@ -42,6 +42,9 @@ def build_llm(backend: Backend, config: dict, modeltype:modelType) -> BaseChatMo
             ) from exc
 
 
+        proxy: str | None = config.get("proxy") or None
+        client_kwargs: dict = {"proxy": proxy} if proxy else {}
+
         return ChatOllama(
             model=config.get("reasoning_model", "") if modeltype == modelType.REASONING else config.get("chat_model", ""),
             base_url=config.get("base_url") or None,
@@ -51,6 +54,7 @@ def build_llm(backend: Backend, config: dict, modeltype:modelType) -> BaseChatMo
             mirostat=config.get("mirostat", 0),
             mirostat_eta=config.get("mirostat_eta", 1.0),
             mirostat_tau=config.get("mirostat_tau", 5.0),
+            client_kwargs=client_kwargs,
         )
 
     if backend == "aws_bedrock":
