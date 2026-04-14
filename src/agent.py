@@ -385,6 +385,7 @@ def _pre_rank_blocks(
     token_preferences: dict[str, float],
     url_preferences: dict[str, float],
     session: str,
+    mode: SearchMode = "balanced",
 ) -> tuple[str, dict[str, str]]:
     """Deterministically pre-rank blocks and keep top candidates for LLM ranking."""
     blocks = [block for block in combined.split("\n\n---\n\n") if block.strip()]
@@ -397,6 +398,14 @@ def _pre_rank_blocks(
         parsed = _parse_paper_block(block)
         title = parsed.get("Title", "")
         score = _score_block(query_tokens, parsed)
+
+        # Reviews mode: amplify the existing +1.0 bonus for meta-analyses /
+        # systematic reviews so they rank higher when the user explicitly wants
+        # secondary evidence synthesis.
+        if mode == "reviews":
+            pub_type = parsed.get("Type", "").lower()
+            if "meta-analysis" in pub_type or "systematic review" in pub_type:
+                score += 1.5
 
         url = parsed.get("URL", "")
         if url in url_preferences:
@@ -477,7 +486,11 @@ def _rewrite_pubmed_query(raw_query: str, mode: SearchMode) -> str:
     if mode == "clinical":
         rewritten = f"({rewritten}) AND (clinical OR trial OR patient)"
     elif mode == "mechanism":
-        rewritten = f"({rewritten}) AND (mechanism OR pathway OR molecular OR cellular)"
+        rewritten = (
+            f"({rewritten}) AND (mechanism OR pathway OR molecular OR cellular"
+            f" OR signaling OR receptor OR enzyme OR transcription"
+            f' OR inhibition OR activation OR "gene expression" OR "protein interaction")'
+        )
     elif mode == "latest":
         rewritten = f"({rewritten}) AND (2020:3000[pdat])"
     elif mode == "reviews":
@@ -972,6 +985,7 @@ class Agent:
             token_preferences=self._token_preferences,
             url_preferences=self._url_preferences,
             session=self.session,
+            mode=self._search_mode,
         )
 
         result = self._rank_results(user_input, combined, title_url_map)

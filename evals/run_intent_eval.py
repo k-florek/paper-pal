@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from evals.metrics import accuracy
+from evals.run_retrieval_eval import load_backend_config
 from src.agent import Agent
 
 
@@ -22,11 +23,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate intent routing accuracy.")
     parser.add_argument("--dataset", default="evals/datasets/intent_classification.jsonl")
     parser.add_argument("--backend", default="ollama")
+    parser.add_argument("--config", default="config.json")
     parser.add_argument("--output", default="evals/results/intent_eval.jsonl")
     args = parser.parse_args()
 
     dataset = load_jsonl(Path(args.dataset))
-    agent = Agent(session="intent-eval", backend=args.backend)
+    backend_config = load_backend_config(Path(args.config), args.backend)
+    agent = Agent(session="intent-eval", backend=args.backend, backend_config=backend_config)
 
     predictions: list[str] = []
     labels: list[str] = []

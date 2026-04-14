@@ -10,9 +10,9 @@ from src.agent import Agent, PaperSearchResult
 VALID_MODES = ["balanced", "clinical", "mechanism", "latest", "reviews"]
 MODE_FEEDBACK_CONFIG = {
     "balanced": {"min_conf": 0.55, "min_gain": 0.34, "pos_weight": 1.0, "neg_weight": 0.7},
-    "clinical": {"min_conf": 0.72, "min_gain": 0.50, "pos_weight": 0.55, "neg_weight": 0.35},
+    "clinical": {"min_conf": 0.72, "min_gain": 0.50, "pos_weight": 0.55, "neg_weight": 0.15},
     "mechanism": {"min_conf": 0.55, "min_gain": 0.34, "pos_weight": 1.1, "neg_weight": 0.7},
-    "latest": {"min_conf": 0.75, "min_gain": 0.50, "pos_weight": 0.5, "neg_weight": 0.25},
+    "latest": {"min_conf": 0.75, "min_gain": 0.50, "pos_weight": 0.5, "neg_weight": 0.10},
     "reviews": {"min_conf": 0.60, "min_gain": 0.34, "pos_weight": 0.95, "neg_weight": 0.6},
 }
 
