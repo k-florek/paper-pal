@@ -7,6 +7,7 @@ including retry logic and conservative field sanitization.
 import requests
 import time
 import xml.etree.ElementTree as ET
+import logging
 from langchain.tools import tool
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -17,6 +18,8 @@ _FIELD_MAX_LEN = 300
 _MAX_LIMIT = 25
 _MIN_LIMIT = 1
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+logger = logging.getLogger(__name__)
 
 
 def _http_get(url: str, params: dict, timeout: int = 10, attempts: int = 3) -> requests.Response:
@@ -121,11 +124,13 @@ def searchPubMed(query: str, limit: int = 10) -> str:
     safe_limit = max(_MIN_LIMIT, min(_MAX_LIMIT, safe_limit))
 
     try:
+        logger.info("PubMed search terms=%r limit=%d", query, safe_limit)
         search_payload = _request_json(
             ESEARCH_URL,
             params={"db": "pubmed", "term": query, "retmax": safe_limit, "retmode": "json"},
         )
         pmids = search_payload.get("esearchresult", {}).get("idlist", [])
+        logger.info("PubMed returned %d PMID(s): %s", len(pmids), ", ".join(pmids) if pmids else "none")
     except Exception as e:
         return f"PubMed search failed: {e}"
 
@@ -140,6 +145,14 @@ def searchPubMed(query: str, limit: int = 10) -> str:
         summaries = summary_payload.get("result", {})
     except Exception as e:
         return f"PubMed fetch failed: {e}"
+
+    returned_titles = []
+    for pmid in pmids:
+        paper = summaries.get(pmid)
+        if not paper or not isinstance(paper, dict):
+            continue
+        returned_titles.append(_sanitize_field(paper.get("title", "N/A"), max_length=120))
+    logger.info("PubMed papers returned (%d): %s", len(returned_titles), " | ".join(returned_titles) if returned_titles else "none")
 
     try:
         efetch_metadata = _extract_efetch_metadata(pmids)
