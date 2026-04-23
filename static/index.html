@@ -302,6 +302,18 @@
       align-items: flex-end;
     }
 
+    .context-indicator {
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-dim);
+      font-size: 0.72rem;
+      padding: 0.45rem 1.25rem 0.6rem;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .chat-input {
       flex: 1;
       background: var(--bg);
@@ -565,6 +577,10 @@
           </svg>
         </button>
       </div>
+
+      <div class="context-indicator" id="contextIndicator">
+        Context: 0/10 turns · papers 0/5 · chars 0/2400
+      </div>
     </div>
 
     <!-- ── Papers Panel ── -->
@@ -660,6 +676,7 @@
     const papersList     = document.getElementById('papersList');
     const papersCountEl  = document.getElementById('papersCount');
     const noPapersEl     = document.getElementById('noPapers');
+    const contextIndicatorEl = document.getElementById('contextIndicator');
 
     // Auto-resize textarea
     chatInput.addEventListener('input', () => {
@@ -692,6 +709,18 @@
 
     function scrollChat() {
       chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function updateContextIndicator(context) {
+      if (!context || typeof context !== 'object') return;
+      const turns = Number(context.history_turns ?? 0);
+      const turnLimit = Number(context.history_turn_limit ?? 0);
+      const paperQueries = Number(context.paper_context_queries ?? 0);
+      const paperLimit = Number(context.paper_context_query_limit ?? 0);
+      const paperChars = Number(context.paper_context_chars ?? 0);
+      const paperCharLimit = Number(context.paper_context_char_limit ?? 0);
+      contextIndicatorEl.textContent =
+        `Context: ${turns}/${turnLimit} turns · papers ${paperQueries}/${paperLimit} · chars ${paperChars}/${paperCharLimit}`;
     }
 
     // ── Chat ──────────────────────────────────────────────────
@@ -811,6 +840,9 @@
 
         const data = await res.json();
         sessionId = data.session_id;
+        if (data.telemetry && data.telemetry.context) {
+          updateContextIndicator(data.telemetry.context);
+        }
 
         typingEl.classList.remove('active');
 

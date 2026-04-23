@@ -255,6 +255,9 @@ class AgentTextResponse(BaseModel):
 
 _DEFAULT_MAX_HISTORY_TURNS = 10
 _MAX_SUMMARY_CHARS = 1800
+_MAX_PAPER_HISTORY = 5
+_MAX_PAPER_CONTEXT_CHARS = 2400
+_MAX_PAPER_ITEMS_PER_QUERY = 8
 
 
 class Agent:
@@ -277,6 +280,7 @@ class Agent:
         self.session = session or str(uuid.uuid4())
         self.conversation_history: list[tuple[str, str]] = []
         self._history_summary: str = ""
+        self._paper_history: list[dict] = []
         config = backend_config or {}
         try:
             self._max_history_turns = max(2, int(config.get("max_history_turns", _DEFAULT_MAX_HISTORY_TURNS)))
@@ -326,14 +330,20 @@ class Agent:
                 message=_NO_RESULTS_MESSAGE,
                 status="no_results",
                 reason="no_trusted_results",
-                telemetry={"duration_sec": self._duration_sec(start)},
+                telemetry={
+                    "duration_sec": self._duration_sec(start),
+                    "context": self._build_context_metrics(),
+                },
             )
 
         result = self._rank_results(user_input, combined, title_url_map)
+        if result.papers:
+            self._remember_paper_results(user_input, result.papers)
         if result.telemetry is None:
             result.telemetry = {}
         result.telemetry["duration_sec"] = self._duration_sec(start)
-        self._remember_turn(user_input, result.message or f"Returned {len(result.papers)} paper(s).")
+        result.telemetry["context"] = self._build_context_metrics()
+        self._remember_turn(user_input, self._paper_result_turn_summary(result))
         return result
 
     def chatAgent(
@@ -409,7 +419,10 @@ class Agent:
         return AgentTextResponse(
             message=content,
             status="conversational",
-            telemetry={"duration_sec": self._duration_sec(start)},
+            telemetry={
+                "duration_sec": self._duration_sec(start),
+                "context": self._build_context_metrics(),
+            },
         )
 
     def _run_search_tools(self, tool_calls: list[dict]) -> list[str]:
@@ -468,9 +481,78 @@ class Agent:
         messages: list[tuple[str, str]] = [("system", chatSystemPrompt)]
         if self._history_summary:
             messages.append(("system", "Conversation context (older turns): " + self._history_summary))
+        papers_context = self._paper_context_summary()
+        if papers_context:
+            messages.append(("system", "Prior paper results context (recent searches): " + papers_context))
         messages.extend(self.conversation_history)
         messages.append(("human", user_input))
         return messages
+
+    def _paper_result_turn_summary(self, result: PaperSearchResult) -> str:
+        """Summarize returned papers so conversational memory keeps citation-level detail."""
+        if not result.papers:
+            return result.message or _NO_RESULTS_MESSAGE
+        snippets: list[str] = []
+        for paper in result.papers[:_MAX_PAPER_ITEMS_PER_QUERY]:
+            title = (paper.title or "Untitled").strip()
+            year = (paper.year or "N/A").strip()
+            snippets.append(f"{title} ({year})")
+        return "Returned papers: " + " | ".join(snippets)
+
+    def _remember_paper_results(self, query: str, papers: list[Paper]) -> None:
+        """Persist recent ranked papers so follow-up questions retain retrieval context."""
+        compact_papers: list[dict] = []
+        for paper in papers[:_MAX_PAPER_ITEMS_PER_QUERY]:
+            compact_papers.append(
+                {
+                    "title": (paper.title or "").strip(),
+                    "year": str(paper.year or "N/A").strip(),
+                    "journal": str(paper.journal or "N/A").strip(),
+                    "url": str(paper.url or "N/A").strip(),
+                }
+            )
+        self._paper_history.append({"query": query.strip(), "papers": compact_papers})
+        if len(self._paper_history) > _MAX_PAPER_HISTORY:
+            self._paper_history = self._paper_history[-_MAX_PAPER_HISTORY:]
+        self._trim_paper_context()
+
+    def _paper_context_summary(self) -> str:
+        """Return compact text of prior queries and selected paper details."""
+        if not self._paper_history:
+            return ""
+        chunks: list[str] = []
+        for item in self._paper_history:
+            query = item.get("query", "")
+            papers = item.get("papers", [])
+            titles: list[str] = []
+            for paper in papers:
+                title = str(paper.get("title") or "Untitled").strip()
+                year = str(paper.get("year") or "N/A").strip()
+                titles.append(f"{title} ({year})")
+            if titles:
+                chunks.append(f"Query: {query} => " + "; ".join(titles))
+        return " || ".join(chunks)[-_MAX_PAPER_CONTEXT_CHARS:]
+
+    def _trim_paper_context(self) -> None:
+        """Keep paper context within configured character and item budgets."""
+        while self._paper_history and len(self._paper_context_summary()) > _MAX_PAPER_CONTEXT_CHARS:
+            self._paper_history = self._paper_history[1:]
+
+    def _build_context_metrics(self) -> dict:
+        """Expose context usage and limits for UI diagnostics."""
+        history_turns = len(self.conversation_history) // 2
+        history_chars = len(self._history_summary) + sum(len(m[1]) for m in self.conversation_history)
+        paper_chars = len(self._paper_context_summary())
+        return {
+            "history_turns": history_turns,
+            "history_turn_limit": self._max_history_turns,
+            "history_chars": history_chars,
+            "history_char_limit": _MAX_SUMMARY_CHARS,
+            "paper_context_queries": len(self._paper_history),
+            "paper_context_query_limit": _MAX_PAPER_HISTORY,
+            "paper_context_chars": paper_chars,
+            "paper_context_char_limit": _MAX_PAPER_CONTEXT_CHARS,
+        }
 
     def _remember_turn(self, user_input: str, assistant_output: str) -> None:
         """Persist the latest turn and trigger history compaction when needed."""
