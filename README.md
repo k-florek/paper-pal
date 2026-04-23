@@ -20,10 +20,10 @@ Paper-Pal/
 ├── main.py          # Headless CLI entry point
 ├── config.json      # Backend configuration (models, parameters, API keys)
 ├── src/
-│   ├── agent.py     # Core agent logic (intent detection, tool calls, ranking)
+│   ├── agent.py     # Core agent logic (tool calls, sanitization, ranking)
 │   ├── model.py     # LLM factory — builds the right client per backend
 │   ├── tools.py     # PubMed search tool (LangChain @tool)
-│   └── prompts.py   # System prompts for chat, intent, and ranker agents
+│   └── prompts.py   # System prompts for chat and ranking agents
 └── static/
     └── index.html   # Web UI
 ```
@@ -125,7 +125,6 @@ Send a message and receive papers or a conversational reply.
 {
   "session_id": "optional-uuid-to-continue-a-conversation",
   "message": "CRISPR off-target effects in human cells",
-  "search_mode": "balanced",
   "backend": "ollama",
   "backend_config": {}
 }
@@ -133,7 +132,6 @@ Send a message and receive papers or a conversational reply.
 
 - `backend` — overrides `default_backend` from `config.json` for this session
 - `backend_config` — key/value overrides merged on top of the `config.json` section for this backend
-- `search_mode` — optional retrieval preset: `balanced`, `clinical`, `mechanism`, `latest`, `reviews`
 
 **Response:**
 ```json
@@ -190,13 +188,38 @@ export OPENAI_API_KEY="your-key-here"
 
 ## How It Works
 
-1. **Intent detection** — a lightweight LLM call classifies the message as `RESEARCH` or `CONVERSATIONAL`. Non-research messages skip the search pipeline entirely.
-2. **Query shaping** — the agent rewrites plain-language queries into PubMed-friendly expressions with controlled synonym/acronym expansion and mode-aware filters.
-3. **Search** — bounded multi-pass retrieval is used: primary search plus at most one broaden fallback and one precision fallback.
-4. **Validation** — every result block is matched against a strict regex. Malformed blocks (potential prompt injections) are discarded and logged.
-5. **Ranking** — deterministic pre-ranking narrows candidates, then a structured-output LLM ranks papers with relevance, confidence, and evidence.
-6. **Diversity control** — near-duplicate titles and over-concentration from a single journal are suppressed before final output.
-7. **Response** — the ranked list is returned to the client as structured JSON.
+1. **Tool decision** — the chat model decides whether to answer conversationally or call the PubMed search tool.
+2. **Search** — when needed, `searchPubMed` retrieves metadata blocks from PubMed.
+3. **Validation** — result blocks are validated against a strict structure; malformed blocks are discarded.
+4. **Ranking** — a structured-output model filters and ranks relevant papers with relevance, confidence, and evidence.
+5. **Response** — the server returns either conversational text or structured paper results.
+
+## Architecture At A Glance
+
+Paper Pal is intentionally split into small modules so each concern is isolated:
+
+- `app.py`: HTTP boundary, request/response models, config redaction, per-session agent lifecycle.
+- `src/agent.py`: orchestration pipeline (tool decision, sanitization, ranking, fallback parsing, telemetry).
+- `src/tools.py`: PubMed data retrieval, retries, XML enrichment (Abstract/MeSH/Type), field sanitization.
+- `src/model.py`: backend-specific LLM construction (Ollama, Bedrock, OpenAI-compatible).
+- `src/prompts.py`: editable prompt contracts for chat behavior and ranking constraints.
+- `main.py`: quick CLI smoke test path.
+
+## Request Lifecycle
+
+1. Client sends `POST /api/chat` with message, optional backend override, and optional `session_id`.
+2. Server resolves/creates the session `Agent` and calls `agent.chat(...)`.
+3. Chat model either responds conversationally or emits a `searchPubMed` tool call.
+4. Tool output is sanitized and strict-validated before any ranking model sees it.
+5. Ranker returns structured `PaperSearchResult` (or fallback/repair paths execute).
+6. API serializes the result to `ChatResponse` and returns telemetry.
+
+## Developer Notes
+
+- Session storage is in-memory by design; restarting the process clears conversation state.
+- `GET /api/config` redacts keys containing `key`, `secret`, or `password`.
+- Ranking output is normalized defensively (URL repair, confidence clamping, evidence fallback).
+- Compatibility aliases (`chatAgent`, `modelType`) are retained for older callers.
 
 
 ## Tuning the Samplers

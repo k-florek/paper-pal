@@ -1,3 +1,9 @@
+"""External data-access tools used by the agent.
+
+This module currently provides a single LangChain tool for PubMed lookup,
+including retry logic and conservative field sanitization.
+"""
+
 import requests
 import time
 import xml.etree.ElementTree as ET
@@ -13,9 +19,9 @@ _MIN_LIMIT = 1
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
-def _request_json(url: str, params: dict, timeout: int = 10, attempts: int = 3) -> dict:
-    """GET JSON with small exponential backoff for transient failures."""
-    last_error = None
+def _http_get(url: str, params: dict, timeout: int = 10, attempts: int = 3) -> requests.Response:
+    """GET with small exponential backoff for transient failures."""
+    last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
             response = requests.get(url, params=params, timeout=timeout)
@@ -23,12 +29,18 @@ def _request_json(url: str, params: dict, timeout: int = 10, attempts: int = 3) 
                 time.sleep(0.4 * (2 ** (attempt - 1)))
                 continue
             response.raise_for_status()
-            return response.json()
+            return response
         except Exception as exc:
             last_error = exc
             if attempt < attempts:
                 time.sleep(0.4 * (2 ** (attempt - 1)))
     raise RuntimeError(str(last_error))
+
+
+def _request_json(url: str, params: dict, timeout: int = 10, attempts: int = 3) -> dict:
+    """GET JSON with small exponential backoff for transient failures."""
+    return _http_get(url, params=params, timeout=timeout, attempts=attempts).json()
+
 
 def _sanitize_field(value: str, max_length: int = _FIELD_MAX_LEN) -> str:
     """Strip newlines and truncate a paper metadata field to prevent prompt injection."""
@@ -39,20 +51,7 @@ def _sanitize_field(value: str, max_length: int = _FIELD_MAX_LEN) -> str:
 
 def _request_text(url: str, params: dict, timeout: int = 10, attempts: int = 3) -> str:
     """GET plain text with retry and exponential backoff."""
-    last_error = None
-    for attempt in range(1, attempts + 1):
-        try:
-            response = requests.get(url, params=params, timeout=timeout)
-            if response.status_code in _RETRYABLE_STATUS and attempt < attempts:
-                time.sleep(0.4 * (2 ** (attempt - 1)))
-                continue
-            response.raise_for_status()
-            return response.text
-        except Exception as exc:
-            last_error = exc
-            if attempt < attempts:
-                time.sleep(0.4 * (2 ** (attempt - 1)))
-    raise RuntimeError(str(last_error))
+    return _http_get(url, params=params, timeout=timeout, attempts=attempts).text
 
 
 def _extract_efetch_metadata(pmids: list[str]) -> dict[str, dict[str, str]]:
@@ -102,9 +101,19 @@ def _extract_efetch_metadata(pmids: list[str]) -> dict[str, dict[str, str]]:
 
     return metadata
 
+
 @tool
 def searchPubMed(query: str, limit: int = 10) -> str:
-    """Search PubMed and return compact metadata blocks for ranking."""
+    """Search PubMed and return compact metadata blocks for ranking.
+
+    Args:
+        query: PubMed query string.
+        limit: Max number of papers requested (clamped to safe bounds).
+
+    Returns:
+        A separator-delimited string of normalized paper metadata blocks,
+        or a human-readable failure/empty marker used by the agent.
+    """
     try:
         safe_limit = int(limit)
     except (TypeError, ValueError):

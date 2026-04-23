@@ -1,0 +1,33 @@
+{
+  "default_backend": "aws_bedrock",
+
+  "ollama": {
+    "chat_model": "qwen3.5:4b",
+    "reasoning_model": "qwen3.5:4b",
+    "base_url": "https://ollama.nomad.slhcddcloud.org",
+    "proxy": "socks5://localhost:1080",
+    "temperature": 0.4,
+    "top_k": 40,
+    "top_p": 0.9,
+    "mirostat": 0,
+    "mirostat_eta": 1.0,
+    "mirostat_tau": 5.0
+  },
+
+  "aws_bedrock": {
+    "chat_model": "us.meta.llama3-1-8b-instruct-v1:0",
+    "reasoning_model": "us.meta.llama3-1-8b-instruct-v1:0",
+    "region": "us-east-1",
+    "temperature": 0.4,
+    "top_p": 0.9
+  },
+
+  "openai": {
+    "chat_model": "llama3.2:3b",
+    "reasoning_model": "llama3.2:3b",
+    "base_url": "https://api.venice.ai/api/v1",
+    "api_key": "",
+    "temperature": 0.4,
+    "top_p": 0.9
+  }
+}

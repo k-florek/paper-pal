@@ -1,3 +1,9 @@
+"""LLM backend factory utilities.
+
+This module centralizes construction of LangChain chat models so all entry
+points share the same backend selection and configuration behavior.
+"""
+
 from typing import Literal
 from enum import Enum
 
@@ -5,11 +11,24 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 Backend = Literal["ollama", "aws_bedrock", "openai"]
 
-class modelType(Enum):
+class ModelType(Enum):
+    """Logical model role used by the application pipeline."""
+
     CHAT = 1
     REASONING = 2
 
-def build_llm(backend: Backend, config: dict, modeltype:modelType) -> BaseChatModel:
+
+# Backward-compatible alias for older imports.
+modelType = ModelType
+
+
+def _get_model_name(config: dict, model_type: ModelType) -> str:
+    """Return model name for the requested role from backend config."""
+    key = "reasoning_model" if model_type == ModelType.REASONING else "chat_model"
+    return config.get(key, "")
+
+
+def build_llm(backend: Backend, config: dict, model_type: ModelType) -> BaseChatModel:
     """Return a LangChain chat model for the requested backend.
 
     Packages are imported lazily so that only the dependency for the chosen
@@ -28,9 +47,22 @@ def build_llm(backend: Backend, config: dict, modeltype:modelType) -> BaseChatMo
 
     openai  - OpenAI-compatible API (langchain-openai)
                 config keys: model, api_key, base_url, temperature, top_p
+
+    Args:
+        backend: Backend identifier.
+        config: Backend configuration map.
+        model_type: Whether to construct the chat or reasoning model.
+
+    Returns:
+        A configured LangChain chat model instance.
+
+    Raises:
+        ImportError: If backend-specific dependency is not installed.
+        ValueError: If the backend identifier is unsupported.
     """
     temperature: float = config.get("temperature", 0.4)
     top_p: float = config.get("top_p", 0.9)
+    model_name = _get_model_name(config, model_type)
 
     if backend == "ollama":
         try:
@@ -46,7 +78,7 @@ def build_llm(backend: Backend, config: dict, modeltype:modelType) -> BaseChatMo
         client_kwargs: dict = {"proxy": proxy} if proxy else {}
 
         return ChatOllama(
-            model=config.get("reasoning_model", "") if modeltype == modelType.REASONING else config.get("chat_model", ""),
+            model=model_name,
             base_url=config.get("base_url") or None,
             temperature=temperature,
             top_k=config.get("top_k", 40),
@@ -68,7 +100,7 @@ def build_llm(backend: Backend, config: dict, modeltype:modelType) -> BaseChatMo
 
 
         return ChatBedrockConverse(
-            model_id=config.get("reasoning_model", "") if modeltype == modelType.REASONING else config.get("chat_model", ""),
+            model_id=model_name,
             region_name=config.get("region", "us-east-1"),
             temperature=temperature,
             top_p=top_p,
@@ -84,7 +116,7 @@ def build_llm(backend: Backend, config: dict, modeltype:modelType) -> BaseChatMo
             ) from exc
 
         return ChatOpenAI(
-            model=config.get("reasoning_model", "") if modeltype == modelType.REASONING else config.get("chat_model", ""),
+            model=model_name,
             base_url=config.get("base_url") or None,
             api_key=config.get("api_key"),
             temperature=temperature,

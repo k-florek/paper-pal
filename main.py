@@ -1,3 +1,8 @@
+"""Minimal CLI entry point for running a single Paper Pal query.
+
+Useful for headless testing and backend validation without starting FastAPI.
+"""
+
 import logging
 
 logging.basicConfig(
@@ -17,9 +22,10 @@ DIM    = "\033[2m"
 
 
 def format_papers(result: PaperSearchResult) -> str:
+    """Render ranked papers in a readable terminal format."""
     if not result.papers:
-        msg = result.message or "No relevant papers found."
-        return f"{YELLOW}{msg}{RESET}"
+        return f"{YELLOW}{result.message or 'No relevant papers found.'}{RESET}"
+
     seen_urls = set()
     lines = []
     display_index = 1
@@ -33,16 +39,23 @@ def format_papers(result: PaperSearchResult) -> str:
             f"    {DIM}{paper.relevance}{RESET}"
         )
         display_index += 1
+
     return "\n\n".join(lines)
 
 
-ai = Agent(backend="ollama")
+def print_response(response: PaperSearchResult | AgentTextResponse | object) -> None:
+    """Print any supported agent response shape to stdout."""
+    if isinstance(response, PaperSearchResult):
+        print(format_papers(response))
+        return
+    if isinstance(response, AgentTextResponse):
+        print(response.message)
+        return
+    print(response)
 
-r = ai.chatAgent('SARS-CoV-2 Evolution')
 
-if isinstance(r, PaperSearchResult):
-    print(format_papers(r))
-elif isinstance(r, AgentTextResponse):
-    print(r.message)
-else:
-    print(r)
+if __name__ == "__main__":
+    # Default probe query for quick local smoke-testing.
+    agent = Agent(backend="ollama")
+    response = agent.chat("SARS-CoV-2 Evolution")
+    print_response(response)

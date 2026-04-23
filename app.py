@@ -1,9 +1,16 @@
+"""FastAPI application for Paper Pal.
+
+This module exposes the web UI and REST endpoints used by the frontend.
+It also owns lightweight in-memory session management where each session maps
+to a dedicated `Agent` instance.
+"""
+
 import json
 import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -11,8 +18,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.agent import Agent, AgentTextResponse, Backend, PaperSearchResult
-
-SearchMode = Literal["balanced", "clinical", "mechanism", "latest", "reviews"]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +32,7 @@ logger = logging.getLogger(__name__)
 _CONFIG_PATH = Path(__file__).parent / "config.json"
 
 def _load_config() -> dict:
+    """Load application configuration from disk and hydrate env-backed secrets."""
     if not _CONFIG_PATH.exists():
         logger.warning("config.json not found at %s; using built-in defaults", _CONFIG_PATH)
         return {"default_backend": "ollama", "ollama": {}}
@@ -49,17 +55,17 @@ _sessions: dict[str, Agent] = {}
 
 
 class ChatRequest(BaseModel):
+    """Incoming chat request payload."""
+
     session_id: Optional[str] = None
     message: str
-    search_mode: SearchMode = "balanced"
-    # If omitted, the default_backend from config.json is used.
     backend: Optional[Backend] = None
-    # If omitted, the backend's section from config.json is used.
-    # Any keys supplied here override the config-file values.
     backend_config: Optional[dict] = None
 
 
 class PaperOut(BaseModel):
+    """Serialized paper returned by the API."""
+
     index: int
     title: str
     authors: Optional[str] = None
@@ -72,6 +78,8 @@ class PaperOut(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    """Unified API response for both conversational and ranked outputs."""
+
     session_id: str
     status: str
     message: Optional[str] = None
@@ -80,68 +88,73 @@ class ChatResponse(BaseModel):
     telemetry: Optional[dict] = None
 
 
-class FeedbackRequest(BaseModel):
-    session_id: str
-    paper_url: str
-    paper_title: str
-    query: str
-    relevant: bool
-    note: Optional[str] = None
-    search_mode: SearchMode = "balanced"
-    confidence: Optional[float] = None
+def _is_sensitive_key(key: str) -> bool:
+    """Return True for config keys that should be redacted in API responses."""
+    lowered = key.lower()
+    return "key" in lowered or "secret" in lowered or "password" in lowered
 
 
-class FeedbackResponse(BaseModel):
-    status: str
-    message: str
+def _redact_config(config: dict) -> dict:
+    """Return a shallow-redacted copy of the config for safe client exposure."""
+    redacted: dict = {}
+    for key, value in config.items():
+        if isinstance(value, dict):
+            redacted[key] = {inner_key: "***" if _is_sensitive_key(inner_key) else inner_value for inner_key, inner_value in value.items()}
+        else:
+            redacted[key] = value
+    return redacted
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    session_id = request.session_id or str(uuid.uuid4())
+def _merge_backend_config(backend: Backend, overrides: Optional[dict]) -> dict:
+    """Merge backend defaults from config with request-level overrides."""
+    file_defaults = _config.get(backend, {})
+    return {**file_defaults, **(overrides or {})}
 
-    if session_id not in _sessions:
+
+def _create_agent(session_id: str, backend: Backend, backend_config: Optional[dict]) -> Agent:
+    """Construct a new per-session agent instance."""
+    merged_config = _merge_backend_config(backend, backend_config)
+    logger.info("Creating new session: %s  backend=%s", session_id, backend)
+    return Agent(session=session_id, backend=backend, backend_config=merged_config)
+
+
+def _get_agent(request: ChatRequest, session_id: str) -> Agent:
+    """Get or create the session agent for an incoming request."""
+    agent = _sessions.get(session_id)
+    if agent is None:
         backend = request.backend or _config.get("default_backend", "ollama")
-        # Start from the file-level defaults for this backend, then apply any
-        # per-request overrides on top so callers can tweak individual keys.
-        file_defaults: dict = _config.get(backend, {})
-        merged_config = {**file_defaults, **(request.backend_config or {})}
-        logger.info("Creating new session: %s  backend=%s", session_id, backend)
-        _sessions[session_id] = Agent(
-            session=session_id,
-            backend=backend,
-            backend_config=merged_config,
+        agent = _create_agent(session_id, backend, request.backend_config)
+        _sessions[session_id] = agent
+    return agent
+
+
+def _build_paper_outputs(result: PaperSearchResult) -> list[PaperOut]:
+    """Convert internal paper models into API response models."""
+    return [
+        PaperOut(
+            index=paper.index,
+            title=paper.title,
+            authors=paper.authors,
+            year=paper.year,
+            journal=paper.journal,
+            url=paper.url,
+            relevance=paper.relevance,
+            confidence=paper.confidence,
+            evidence=paper.evidence,
         )
+        for paper in result.papers
+    ]
 
-    agent = _sessions[session_id]
 
-    try:
-        result = agent.chatAgent(request.message, request.search_mode)
-    except Exception as e:
-        logger.exception("Agent error in session %s", session_id)
-        raise HTTPException(status_code=500, detail=str(e))
-
+def _build_chat_response(session_id: str, result) -> ChatResponse:
+    """Normalize agent outputs into a stable API response envelope."""
     if isinstance(result, PaperSearchResult):
-        papers = [
-            PaperOut(
-                index=p.index,
-                title=p.title,
-                authors=p.authors,
-                year=p.year,
-                journal=p.journal,
-                url=p.url,
-                relevance=p.relevance,
-                confidence=p.confidence,
-                evidence=p.evidence,
-            )
-            for p in result.papers
-        ]
         return ChatResponse(
             session_id=session_id,
             status=result.status,
             message=result.message,
             reason=result.reason,
-            papers=papers,
+            papers=_build_paper_outputs(result),
             telemetry=result.telemetry,
         )
 
@@ -165,40 +178,29 @@ async def chat(request: ChatRequest):
     )
 
 
-@app.post("/api/feedback", response_model=FeedbackResponse)
-async def feedback(request: FeedbackRequest):
-    if request.session_id not in _sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Handle one chat turn and return either papers or conversational text."""
+    session_id = request.session_id or str(uuid.uuid4())
+    agent = _get_agent(request, session_id)
 
-    agent = _sessions[request.session_id]
-    agent.record_feedback(
-        paper_url=request.paper_url,
-        paper_title=request.paper_title,
-        query=request.query,
-        relevant=request.relevant,
-        note=request.note,
-        search_mode=request.search_mode,
-        confidence=request.confidence,
-    )
-
-    return FeedbackResponse(status="ok", message="Feedback recorded")
+    try:
+        result = agent.chat(request.message)
+    except Exception as e:
+        logger.exception("Agent error in session %s", session_id)
+        raise HTTPException(status_code=500, detail=str(e))
+    return _build_chat_response(session_id, result)
 
 
 @app.get("/api/config")
 async def get_config():
     """Return the active backend configuration. Secrets are redacted."""
-    safe = {}
-    for key, value in _config.items():
-        if isinstance(value, dict):
-            safe[key] = {k: "***" if "key" in k or "secret" in k or "password" in k else v
-                         for k, v in value.items()}
-        else:
-            safe[key] = value
-    return JSONResponse(safe)
+    return JSONResponse(_redact_config(_config))
 
 
 @app.get("/")
 async def index():
+    """Serve the single-page frontend."""
     return FileResponse("static/index.html")
 
 

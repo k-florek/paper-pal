@@ -108,6 +108,64 @@
       color: #6ee7b7;
       background: rgba(52, 211, 153, 0.08);
       letter-spacing: 0.05em;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .header-badge-model:hover {
+      border-color: rgba(52, 211, 153, 0.65);
+      background: rgba(52, 211, 153, 0.16);
+    }
+
+    /* ── Backend selector dropdown ───────────────────────────── */
+    .backend-selector { position: relative; }
+
+    .backend-dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      min-width: 210px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .backend-dropdown-label {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      padding: 0.55rem 1rem 0.35rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .backend-option {
+      display: block;
+      width: 100%;
+      padding: 0.55rem 1rem;
+      text-align: left;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .backend-option:hover {
+      background: var(--accent-soft);
+      color: var(--accent2);
+    }
+
+    .backend-option.active {
+      color: #6ee7b7;
+      background: rgba(52, 211, 153, 0.08);
     }
 
     /* ── Main layout ─────────────────────────────────────────── */
@@ -242,37 +300,6 @@
       display: flex;
       gap: 0.65rem;
       align-items: flex-end;
-    }
-
-    .mode-row {
-      padding: 0.65rem 1.25rem 0.15rem;
-      border-top: 1px solid var(--border);
-      background: var(--surface);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.45rem;
-    }
-
-    .mode-btn {
-      font-size: 0.68rem;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 0.18rem 0.58rem;
-      background: rgba(255, 255, 255, 0.02);
-      color: var(--text-dim);
-      cursor: pointer;
-      transition: color 0.2s, border-color 0.2s, background 0.2s;
-    }
-
-    .mode-btn:hover {
-      border-color: var(--accent);
-      color: var(--text);
-    }
-
-    .mode-btn.active {
-      border-color: var(--accent2);
-      background: rgba(167, 139, 250, 0.16);
-      color: var(--accent2);
     }
 
     .chat-input {
@@ -464,44 +491,6 @@
       line-height: 1.5;
     }
 
-    .paper-card-feedback {
-      margin-top: 0.55rem;
-      display: flex;
-      gap: 0.4rem;
-      flex-wrap: wrap;
-    }
-
-    .feedback-btn {
-      border: 1.5px solid rgba(108, 99, 255, 0.45);
-      background: rgba(108, 99, 255, 0.12);
-      color: #d9d5ff;
-      border-radius: 999px;
-      font-size: 0.68rem;
-      font-weight: 600;
-      padding: 0.24rem 0.7rem;
-      min-height: 28px;
-      cursor: pointer;
-      transition: border-color 0.2s, color 0.2s, background 0.2s;
-    }
-
-    .feedback-btn:hover {
-      border-color: var(--accent);
-      color: var(--text);
-      background: rgba(108, 99, 255, 0.22);
-    }
-
-    .feedback-btn.active-positive {
-      border-color: #34d399;
-      color: #34d399;
-      background: rgba(52, 211, 153, 0.14);
-    }
-
-    .feedback-btn.active-negative {
-      border-color: #f87171;
-      color: #f87171;
-      background: rgba(248, 113, 113, 0.14);
-    }
-
     /* Query separator */
     .query-separator {
       display: flex;
@@ -534,7 +523,10 @@
     </div>
     <div class="header-badges">
       <span class="header-badge">PubMed</span>
-      <span class="header-badge-model" id="modelBadge">…</span>
+      <div class="backend-selector" id="backendSelector">
+        <button class="header-badge-model" id="modelBadge" title="Switch backend">…</button>
+        <div class="backend-dropdown" id="backendDropdown" hidden></div>
+      </div>
     </div>
   </header>
 
@@ -558,14 +550,6 @@
           <div class="dot"></div>
           <div class="dot"></div>
         </div>
-      </div>
-
-      <div class="mode-row" id="modeRow">
-        <button class="mode-btn active" data-mode="balanced">Balanced</button>
-        <button class="mode-btn" data-mode="clinical">Clinical</button>
-        <button class="mode-btn" data-mode="mechanism">Mechanism</button>
-        <button class="mode-btn" data-mode="latest">Latest</button>
-        <button class="mode-btn" data-mode="reviews">Reviews First</button>
       </div>
 
       <div class="chat-input-area">
@@ -604,20 +588,66 @@
 
     let sessionId = null;
     let totalPapers = 0;
-    let currentSearchMode = 'balanced';
+    let selectedBackend = null;
 
-    // ── Model badge ───────────────────────────────────────────
+    // ── Backend selector ──────────────────────────────────────
     (async () => {
-      const badge = document.getElementById('modelBadge');
+      const badge    = document.getElementById('modelBadge');
+      const dropdown = document.getElementById('backendDropdown');
+      const backendModels = {};
+      let availableBackends = [];
+
+      function badgeLabel(backend) {
+        const model = backendModels[backend] || '';
+        const label = backend.replace(/_/g, ' ');
+        return model ? `${label} · ${model} ▾` : `${label} ▾`;
+      }
+
+      function renderDropdown() {
+        dropdown.innerHTML = `<div class="backend-dropdown-label">Switch backend</div>`;
+        availableBackends.forEach(b => {
+          const btn = document.createElement('button');
+          btn.className = 'backend-option' + (b === selectedBackend ? ' active' : '');
+          btn.textContent = badgeLabel(b).replace(' ▾', '');
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (b !== selectedBackend) {
+              selectedBackend = b;
+              sessionId = null;
+              badge.textContent = badgeLabel(b);
+              dropdown.hidden = true;
+              appendMessage('assistant',
+                `Switched to <strong>${b.replace(/_/g, ' ')}</strong>. Starting a new session.`);
+            } else {
+              dropdown.hidden = true;
+            }
+          });
+          dropdown.appendChild(btn);
+        });
+      }
+
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        renderDropdown();
+        dropdown.hidden = !dropdown.hidden;
+      });
+
+      document.addEventListener('click', () => { dropdown.hidden = true; });
+
       try {
         const res = await fetch('/api/config');
         if (!res.ok) throw new Error('config fetch failed');
         const cfg = await res.json();
-        const backend = cfg.default_backend || 'unknown';
-        const backendCfg = cfg[backend] || {};
-        const model = backendCfg.chat_model || backendCfg.model_id || backendCfg.model || '';
-        const label = backend.replace('_', ' ');
-        badge.textContent = model ? `${label} · ${model}` : label;
+        const defaultBackend = cfg.default_backend || 'ollama';
+        availableBackends = Object.keys(cfg).filter(
+          k => k !== 'default_backend' && typeof cfg[k] === 'object' && cfg[k] !== null
+        );
+        availableBackends.forEach(b => {
+          const bcfg = cfg[b] || {};
+          backendModels[b] = bcfg.chat_model || bcfg.model_id || bcfg.model || '';
+        });
+        selectedBackend = defaultBackend;
+        badge.textContent = badgeLabel(selectedBackend);
       } catch {
         badge.textContent = 'model unknown';
       }
@@ -630,7 +660,6 @@
     const papersList     = document.getElementById('papersList');
     const papersCountEl  = document.getElementById('papersCount');
     const noPapersEl     = document.getElementById('noPapers');
-    const modeRow        = document.getElementById('modeRow');
 
     // Auto-resize textarea
     chatInput.addEventListener('input', () => {
@@ -647,16 +676,6 @@
     });
 
     sendBtn.addEventListener('click', sendMessage);
-
-    modeRow.addEventListener('click', (e) => {
-      const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
-      const mode = target.getAttribute('data-mode');
-      if (!mode) return;
-      currentSearchMode = mode;
-      modeRow.querySelectorAll('.mode-btn').forEach((btn) => btn.classList.remove('active'));
-      target.classList.add('active');
-    });
 
     // ── Helpers ───────────────────────────────────────────────
 
@@ -754,68 +773,13 @@
           ${tagsHtml ? `<div class="paper-card-meta">${tagsHtml}</div>` : ''}
           <div class="paper-card-relevance">${escapeHtml(paper.relevance)}</div>
           ${paper.evidence ? `<div class="paper-card-evidence"><strong>Evidence:</strong> ${escapeHtml(paper.evidence)}</div>` : ''}
-          <div class="paper-card-feedback">
-            <button class="feedback-btn" data-feedback="positive">Relevant</button>
-            <button class="feedback-btn" data-feedback="negative">Not relevant</button>
-          </div>
         `;
-
-        const [positiveBtn, negativeBtn] = card.querySelectorAll('.feedback-btn');
-        positiveBtn.addEventListener('click', () => {
-          sendFeedback({
-            paperUrl: paper.url || '',
-            paperTitle: paper.title || '',
-            query: queryLabel,
-            relevant: true,
-            searchMode: currentSearchMode,
-            confidence: Number(paper.confidence),
-            note: '',
-          });
-          positiveBtn.classList.add('active-positive');
-          negativeBtn.classList.remove('active-negative');
-        });
-
-        negativeBtn.addEventListener('click', () => {
-          sendFeedback({
-            paperUrl: paper.url || '',
-            paperTitle: paper.title || '',
-            query: queryLabel,
-            relevant: false,
-            searchMode: currentSearchMode,
-            confidence: Number(paper.confidence),
-            note: '',
-          });
-          negativeBtn.classList.add('active-negative');
-          positiveBtn.classList.remove('active-positive');
-        });
 
         papersList.appendChild(card);
       });
 
       updatePapersCount();
       papersList.scrollTop = papersList.scrollHeight;
-    }
-
-    async function sendFeedback({ paperUrl, paperTitle, query, relevant, searchMode, confidence, note }) {
-      if (!sessionId) return;
-      try {
-        await fetch('/api/feedback', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: sessionId,
-            paper_url: paperUrl,
-            paper_title: paperTitle,
-            query,
-            relevant,
-            search_mode: searchMode || 'balanced',
-            confidence: Number.isNaN(confidence) ? null : confidence,
-            note,
-          }),
-        });
-      } catch (err) {
-        console.error('Feedback submit failed:', err);
-      }
     }
 
     // ── Send ──────────────────────────────────────────────────
@@ -837,7 +801,7 @@
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, message, search_mode: currentSearchMode }),
+          body: JSON.stringify({ session_id: sessionId, message, backend: selectedBackend }),
         });
 
         if (!res.ok) {
@@ -850,8 +814,6 @@
 
         typingEl.classList.remove('active');
 
-        const status = data.status || 'conversational';
-
         if (data.papers && data.papers.length > 0) {
           const n = data.papers.length;
           appendMessage(
@@ -860,17 +822,10 @@
             'papers-found'
           );
           addPaperCards(data.papers, message);
-        } else if (status === 'clarifying' && data.message) {
-          appendMessage('assistant', escapeHtml(data.message));
-        } else if (status === 'failed') {
-          const reason = data.reason ? ` (${escapeHtml(data.reason)})` : '';
-          appendMessage('assistant', `I hit an issue while processing your request${reason}. Please refine and try again.`);
-        } else if (status === 'no_results') {
-          appendMessage('assistant', escapeHtml(data.message || 'No relevant papers found for your query.'));
         } else if (data.message) {
           appendMessage('assistant', escapeHtml(data.message));
         } else {
-          appendMessage('assistant', 'No relevant papers found for your query.');
+          appendMessage('assistant', 'No papers found.');
         }
       } catch (err) {
         typingEl.classList.remove('active');
